@@ -1,26 +1,46 @@
-// ── App ───────────────────────────────────────────────────────────────────────
-// Orchestrates the UI: builds the shell HTML, wires up tabs,
-// connects the store, date picker, planner, and calendar.
+// ── Trip Planner View ─────────────────────────────────────────────────────────
+// Renders the Planner + Calendar tabs for a single trip.
+// Receives tripId from the router.
 
-import { DatePicker }    from './datepicker.js';
-import { createStore }   from './store.js';
-import { renderPlanner } from './planner.js';
+import { DatePicker }     from './datepicker.js';
+import { createTripStore } from './store.js';
+import { renderPlanner }  from './planner.js';
 import { renderCalendar } from './calendar.js';
+import { getCurrentUser, renderAuthHeader } from './auth.js';
+import { navigate }       from './router.js';
 
-export function createApp(root) {
+let _store = null;
+
+export function createApp(root, tripId) {
+  if (_store) { _store.destroy(); _store = null; }
+
+  const uid = getCurrentUser()?.uid || null;
+
+  _store = createTripStore(tripId, uid, updatedDays => {
+    trips = updatedDays;
+    refresh();
+  });
+
   // ── Shell HTML ─────────────────────────────────────────────────────────────
   root.innerHTML = `
     <div class="topbar">
-      <div class="logo">trippy<span>.</span>planner</div>
-      <div class="tabs">
-        <button class="tab active" data-tab="planner">Planner</button>
-        <button class="tab"        data-tab="calendar">Calendar</button>
+      <div class="topbar-left">
+        <button class="ghost-btn back-btn" id="back-btn">← All Trips</button>
+        <div class="logo">trippy<span>.</span>planner</div>
+        <span class="trip-name-label" id="trip-name-label"></span>
+      </div>
+      <div class="topbar-right">
+        <div class="tabs">
+          <button class="tab active" data-tab="planner">Planner</button>
+          <button class="tab"        data-tab="calendar">Calendar</button>
+        </div>
+        <button class="ghost-btn globe-nav-btn" id="globe-nav-btn">🌍 Globe</button>
+        <div class="auth-slot"></div>
       </div>
     </div>
 
-    <!-- ── Planner Tab ─────────────────────────────────────────────────── -->
+    <!-- ── Planner Tab ───────────────────────────────────────────────────── -->
     <div id="tab-planner">
-
       <div class="section-label">Add a new day</div>
       <div class="add-bar">
         <div class="field-group date-picker-wrap" id="dp-wrap">
@@ -72,7 +92,7 @@ export function createApp(root) {
       </div>
     </div>
 
-    <!-- ── Calendar Tab ─────────────────────────────────────────────────── -->
+    <!-- ── Calendar Tab ──────────────────────────────────────────────────── -->
     <div id="tab-calendar" style="display:none">
       <div class="cal-nav">
         <button class="cal-nav-btn" id="cal-prev">&#8249; Prev</button>
@@ -86,54 +106,51 @@ export function createApp(root) {
   `;
 
   // ── State ──────────────────────────────────────────────────────────────────
-  let trips    = [];
-  let openId   = null;
+  let trips     = _store.getAll();
+  let openId    = null;
   let activeTab = 'planner';
 
   const now = new Date();
   let calYear  = now.getFullYear();
   let calMonth = now.getMonth();
 
-  // ── Store ──────────────────────────────────────────────────────────────────
-  const store = createStore((updatedTrips) => {
-    trips = updatedTrips;
-    refresh();
-  });
-  trips = store.getAll();
+  // Show trip name
+  root.querySelector('#trip-name-label').textContent = _store.tripName();
+
+  renderAuthHeader(root);
+
+  // ── Navigation ─────────────────────────────────────────────────────────────
+  root.querySelector('#back-btn').addEventListener('click', () => navigate('/'));
+  root.querySelector('#globe-nav-btn').addEventListener('click', () => navigate(`/globe/${tripId}`));
 
   // ── Date Picker ────────────────────────────────────────────────────────────
   const dpWrap  = root.querySelector('#dp-wrap');
   const dpInput = root.querySelector('#new-date-display');
   let selectedDate = null;
 
-  const dp = new DatePicker(dpWrap, dpInput, (ds) => {
-    selectedDate = ds;
-  });
+  const dp = new DatePicker(dpWrap, dpInput, ds => { selectedDate = ds; });
   dp.init();
 
   // ── Add Day ────────────────────────────────────────────────────────────────
   const destInput = root.querySelector('#new-dest');
-  const addBtn    = root.querySelector('#add-btn');
 
   function addDay() {
     const dest = destInput.value.trim();
     if (!selectedDate || !dest) {
-      if (!selectedDate) dpInput.focus();
-      else destInput.focus();
-      dpInput.style.borderColor = !selectedDate ? 'var(--accent)' : '';
+      dpInput.style.borderColor   = !selectedDate ? 'var(--accent)' : '';
       destInput.style.borderColor = !dest ? 'var(--accent)' : '';
       return;
     }
-    dpInput.style.borderColor  = '';
+    dpInput.style.borderColor   = '';
     destInput.style.borderColor = '';
-    store.add(selectedDate, dest);
+    _store.add(selectedDate, dest);
     selectedDate = null;
     dp.reset();
     destInput.value = '';
     destInput.focus();
   }
 
-  addBtn.addEventListener('click', addDay);
+  root.querySelector('#add-btn').addEventListener('click', addDay);
   destInput.addEventListener('keydown', e => { if (e.key === 'Enter') addDay(); });
 
   // ── Tabs ───────────────────────────────────────────────────────────────────
@@ -142,32 +159,28 @@ export function createApp(root) {
       activeTab = btn.dataset.tab;
       root.querySelectorAll('.tab').forEach(b =>
         b.classList.toggle('active', b.dataset.tab === activeTab));
-      root.querySelector('#tab-planner').style.display =
-        activeTab === 'planner' ? '' : 'none';
-      root.querySelector('#tab-calendar').style.display =
-        activeTab === 'calendar' ? '' : 'none';
+      root.querySelector('#tab-planner').style.display  = activeTab === 'planner'  ? '' : 'none';
+      root.querySelector('#tab-calendar').style.display = activeTab === 'calendar' ? '' : 'none';
       if (activeTab === 'calendar') renderCalendar(root, trips, calYear, calMonth);
     });
   });
 
   // ── Calendar nav ───────────────────────────────────────────────────────────
   root.querySelector('#cal-prev').addEventListener('click', () => {
-    calMonth--;
-    if (calMonth < 0) { calMonth = 11; calYear--; }
+    calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; }
     renderCalendar(root, trips, calYear, calMonth);
   });
   root.querySelector('#cal-next').addEventListener('click', () => {
-    calMonth++;
-    if (calMonth > 11) { calMonth = 0; calYear++; }
+    calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; }
     renderCalendar(root, trips, calYear, calMonth);
   });
 
   // ── CSV Download ───────────────────────────────────────────────────────────
   root.querySelector('#download-btn').addEventListener('click', () => {
-    const blob = new Blob([store.toCSV()], { type: 'text/csv' });
+    const blob = new Blob([_store.toCSV()], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'trip_plan.csv';
+    a.download = `${_store.tripName().replace(/\s+/g, '_')}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
   });
@@ -177,15 +190,15 @@ export function createApp(root) {
     root.querySelector('#upload-input').click();
   });
 
-  root.querySelector('#upload-input').addEventListener('change', (e) => {
+  root.querySelector('#upload-input').addEventListener('change', e => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
-      const lines = ev.target.result.trim().split('\n').slice(1); // skip header
+    reader.onload = ev => {
+      const lines = ev.target.result.trim().split('\n').slice(1);
       const loaded = lines.map(line => {
-        const p = line.match(/(".*?"|[^,]+)/g) || [];
-        const clean = p.map(v => v.replace(/^"|"$/g,'').replace(/""/g,'"'));
+        const p     = line.match(/(".*?"|[^,]+)/g) || [];
+        const clean = p.map(v => v.replace(/^"|"$/g, '').replace(/""/g, '"'));
         return {
           id:            Date.now().toString(36) + Math.random().toString(36).slice(2),
           date:          clean[0] || '',
@@ -199,23 +212,20 @@ export function createApp(root) {
           finalised:     clean[8] === 'Y',
         };
       }).filter(t => t.date && t.destination);
-      store.loadFromCSV(loaded);
+      _store.loadFromCSV(loaded);
     };
     reader.readAsText(file);
-    e.target.value = ''; // allow re-upload of same file
+    e.target.value = '';
   });
 
   // ── Refresh ────────────────────────────────────────────────────────────────
   function refresh() {
-    renderPlanner(root, trips, store, openId, (id) => {
+    renderPlanner(root, trips, _store, openId, id => {
       openId = id;
       refresh();
     });
-    if (activeTab === 'calendar') {
-      renderCalendar(root, trips, calYear, calMonth);
-    }
+    if (activeTab === 'calendar') renderCalendar(root, trips, calYear, calMonth);
   }
 
-  // ── Initial render ─────────────────────────────────────────────────────────
   refresh();
 }
