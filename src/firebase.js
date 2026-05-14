@@ -2,28 +2,19 @@ import { initializeApp } from 'firebase/app';
 import { getFirestore }  from 'firebase/firestore';
 import { getAuth }       from 'firebase/auth';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SETUP — replace every "REPLACE_WITH_…" value with your own Firebase config.
-//
-// Steps:
-//   1. Go to console.firebase.google.com
-//   2. Create a project (or open an existing one)
-//   3. Project Settings → Your apps → Add web app → copy firebaseConfig here
-//   4. Authentication → Sign-in method → enable Google + Email/Password
-//   5. Firestore Database → Create database (Production mode)
-//   6. Firestore → Rules → paste the rules from the README
-// ─────────────────────────────────────────────────────────────────────────────
+// Config is loaded from .env.local (gitignored).
+// For GitHub Actions deployment, add these as repository secrets.
+// See .env.example for the required variable names.
 const firebaseConfig = {
-  apiKey: "AIzaSyA28a35tBo-4TZM7ZVsZei095U_EnHRtrc",
-  authDomain: "trippy-planner-807df.firebaseapp.com",
-  projectId: "trippy-planner-807df",
-  storageBucket: "trippy-planner-807df.firebasestorage.app",
-  messagingSenderId: "376063703433",
-  appId: "1:376063703433:web:a1fe668b8733d05ac74958",
-  measurementId: "G-X6XC5GQMDJ"
+  apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId:             import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-const IS_CONFIGURED = !firebaseConfig.apiKey.startsWith('REPLACE_');
+const IS_CONFIGURED = !!firebaseConfig.apiKey;
 
 let _db   = null;
 let _auth = null;
