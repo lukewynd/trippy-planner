@@ -1059,6 +1059,53 @@ body {
 }
 .map-tooltip.leaflet-tooltip::before { border-top-color: var(--border-light); }
 
+/* ── Landing Tabs (Trips / Calendar) ────────────────────── */
+.landing-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0;
+}
+
+.landing-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: var(--font-main);
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: -1px;
+  padding: 10px 18px;
+  transition: all 0.15s;
+}
+
+.landing-tab:hover { color: var(--text-primary); }
+
+.landing-tab.active {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── Landing calendar header ─────────────────────────────── */
+.landing-cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.landing-cal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
 /* ── Filter Tabs (landing) ───────────────────────────────── */
 .filter-tabs {
   display: flex;

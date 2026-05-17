@@ -1,17 +1,22 @@
 // ── Landing Page ──────────────────────────────────────────────────────────────
-// Shows all trips as cards with filter tabs: All / My Trips / Shared with Me.
+// Two tabs: Trips grid (with All / My Trips / Shared with Me filter) and a
+// combined Calendar showing every day from all of the user's own trips.
 
 import { createTripListStore, checkForMigration, completeMigration } from './store.js';
 import { getCurrentUser, renderAuthHeader } from './auth.js';
+import { renderCalendar } from './calendar.js';
 import { navigate } from './router.js';
 import { openShareModal } from './sharing.js';
 
-let _listStore = null;
-let _filter    = 'all'; // 'all' | 'mine' | 'shared'
+let _listStore  = null;
+let _filter     = 'all';      // trip-grid filter
+let _tab        = 'trips';    // 'trips' | 'calendar'
+let _calYear    = new Date().getFullYear();
+let _calMonth   = new Date().getMonth();
 
 export function renderLanding(root) {
-  const user = getCurrentUser();
-  const uid  = user?.uid || null;
+  const user        = getCurrentUser();
+  const uid         = user?.uid || null;
   const displayName = user?.displayName || user?.email || '';
 
   if (_listStore) { _listStore.destroy(); _listStore = null; }
@@ -19,12 +24,11 @@ export function renderLanding(root) {
   _listStore = createTripListStore(uid, displayName, trips => _render(root, trips, uid));
 }
 
-function _render(root, trips, uid) {
-  const migData = checkForMigration();
+// ── Main render ───────────────────────────────────────────────────────────────
 
-  // Apply filter
-  const filtered = _applyFilter(trips, uid);
-  const hasSharedTrips = trips.some(t => uid && t.ownerId && t.ownerId !== uid);
+function _render(root, trips, uid) {
+  const migData    = checkForMigration();
+  const filtered   = _applyFilter(trips, uid);
 
   root.innerHTML = `
     <div class="topbar">
@@ -32,39 +36,69 @@ function _render(root, trips, uid) {
       <div class="auth-slot"></div>
     </div>
 
-    ${migData ? `
-      <div class="migration-banner" id="mig-banner">
-        <span class="mig-text">You have a saved trip — give it a name to keep it:</span>
-        <input class="dark-input mig-input" id="mig-name" value="My Trip" placeholder="Trip name">
-        <button class="add-btn mig-save" id="mig-save">Save</button>
-        <button class="ghost-btn mig-skip" id="mig-skip">Dismiss</button>
-      </div>
-    ` : ''}
-
-    <div class="landing-header">
-      <h1 class="landing-title">Your Trips</h1>
-      <button class="add-btn" id="new-trip-btn">+ New Trip</button>
+    <div class="landing-tabs">
+      <button class="landing-tab ${_tab === 'trips'    ? 'active' : ''}" data-ltab="trips">Trips</button>
+      <button class="landing-tab ${_tab === 'calendar' ? 'active' : ''}" data-ltab="calendar">Calendar</button>
     </div>
 
-    ${uid ? `
-      <div class="filter-tabs">
-        <button class="filter-tab ${_filter === 'all'    ? 'active' : ''}" data-filter="all">All Trips</button>
-        <button class="filter-tab ${_filter === 'mine'   ? 'active' : ''}" data-filter="mine">My Trips</button>
-        <button class="filter-tab ${_filter === 'shared' ? 'active' : ''}" data-filter="shared">Shared with Me</button>
-      </div>
-    ` : ''}
+    <!-- ── Trips view ──────────────────────────────────────────────────── -->
+    <div id="lv-trips" ${_tab !== 'trips' ? 'style="display:none"' : ''}>
+      ${migData ? `
+        <div class="migration-banner" id="mig-banner">
+          <span class="mig-text">You have a saved trip — give it a name to keep it:</span>
+          <input class="dark-input mig-input" id="mig-name" value="My Trip" placeholder="Trip name">
+          <button class="add-btn mig-save" id="mig-save">Save</button>
+          <button class="ghost-btn mig-skip" id="mig-skip">Dismiss</button>
+        </div>
+      ` : ''}
 
-    ${filtered.length === 0 ? `
-      <div class="empty-state">
-        <div class="empty-icon">✈</div>
-        <p>${_emptyMessage()}</p>
+      <div class="landing-header">
+        <h1 class="landing-title">Your Trips</h1>
+        <button class="add-btn" id="new-trip-btn">+ New Trip</button>
       </div>
-    ` : `
-      <div class="landing-grid" id="trips-grid">
-        ${filtered.map(t => _card(t, uid)).join('')}
-      </div>
-    `}
 
+      ${uid ? `
+        <div class="filter-tabs">
+          <button class="filter-tab ${_filter === 'all'    ? 'active' : ''}" data-filter="all">All Trips</button>
+          <button class="filter-tab ${_filter === 'mine'   ? 'active' : ''}" data-filter="mine">My Trips</button>
+          <button class="filter-tab ${_filter === 'shared' ? 'active' : ''}" data-filter="shared">Shared with Me</button>
+        </div>
+      ` : ''}
+
+      ${filtered.length === 0 ? `
+        <div class="empty-state">
+          <div class="empty-icon">✈</div>
+          <p>${_emptyMessage()}</p>
+        </div>
+      ` : `
+        <div class="landing-grid" id="trips-grid">
+          ${filtered.map(t => _card(t, uid)).join('')}
+        </div>
+      `}
+    </div>
+
+    <!-- ── Calendar view ───────────────────────────────────────────────── -->
+    <div id="lv-calendar" ${_tab !== 'calendar' ? 'style="display:none"' : ''}>
+      <div class="landing-cal-header">
+        <h2 class="landing-cal-title">All My Trips</h2>
+        <div class="cal-nav">
+          <button class="cal-nav-btn" id="cal-prev">&#8249; Prev</button>
+          <span class="cal-title" id="cal-title"></span>
+          <button class="cal-nav-btn" id="cal-next">Next &#8250;</button>
+        </div>
+      </div>
+      <div class="cal-grid" id="cal-days-header"></div>
+      <div style="height:6px"></div>
+      <div class="cal-grid" id="cal-body"></div>
+      ${trips.length === 0 ? `
+        <div class="empty-state" style="margin-top:32px">
+          <div class="empty-icon">📅</div>
+          <p>Add days to your trips and they'll appear here.</p>
+        </div>
+      ` : ''}
+    </div>
+
+    <!-- ── New-trip modal ──────────────────────────────────────────────── -->
     <div class="modal-overlay" id="new-trip-modal" style="display:none">
       <div class="modal-box">
         <div class="modal-title">Name your trip</div>
@@ -79,7 +113,32 @@ function _render(root, trips, uid) {
 
   renderAuthHeader(root);
 
-  // ── Migration ───────────────────────────────────────────────────────────────
+  // ── Landing tab switching ─────────────────────────────────────────────────
+  root.querySelectorAll('[data-ltab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _tab = btn.dataset.ltab;
+      root.querySelector('#lv-trips').style.display    = _tab === 'trips'    ? '' : 'none';
+      root.querySelector('#lv-calendar').style.display = _tab === 'calendar' ? '' : 'none';
+      root.querySelectorAll('.landing-tab').forEach(b =>
+        b.classList.toggle('active', b.dataset.ltab === _tab));
+      if (_tab === 'calendar') _renderCal(root, trips, uid);
+    });
+  });
+
+  // ── Render calendar immediately if that tab is active ─────────────────────
+  if (_tab === 'calendar') _renderCal(root, trips, uid);
+
+  // ── Calendar prev / next ──────────────────────────────────────────────────
+  root.querySelector('#cal-prev')?.addEventListener('click', () => {
+    _calMonth--; if (_calMonth < 0) { _calMonth = 11; _calYear--; }
+    _renderCal(root, trips, uid);
+  });
+  root.querySelector('#cal-next')?.addEventListener('click', () => {
+    _calMonth++; if (_calMonth > 11) { _calMonth = 0; _calYear++; }
+    _renderCal(root, trips, uid);
+  });
+
+  // ── Migration ─────────────────────────────────────────────────────────────
   if (migData) {
     root.querySelector('#mig-save').addEventListener('click', () => {
       const name = root.querySelector('#mig-name').value.trim() || 'My Trip';
@@ -92,7 +151,7 @@ function _render(root, trips, uid) {
     });
   }
 
-  // ── Filter tabs ─────────────────────────────────────────────────────────────
+  // ── Filter tabs ───────────────────────────────────────────────────────────
   root.querySelectorAll('.filter-tab').forEach(btn => {
     btn.addEventListener('click', () => {
       _filter = btn.dataset.filter;
@@ -100,17 +159,16 @@ function _render(root, trips, uid) {
     });
   });
 
-  // ── New-trip modal ──────────────────────────────────────────────────────────
+  // ── New-trip modal ────────────────────────────────────────────────────────
   const modal     = root.querySelector('#new-trip-modal');
   const nameInput = root.querySelector('#trip-name-input');
 
-  root.querySelector('#new-trip-btn').addEventListener('click', () => {
+  root.querySelector('#new-trip-btn')?.addEventListener('click', () => {
     modal.style.display = 'flex';
     nameInput.focus();
   });
   root.querySelector('#modal-cancel').addEventListener('click', () => {
-    modal.style.display = 'none';
-    nameInput.value = '';
+    modal.style.display = 'none'; nameInput.value = '';
   });
   modal.addEventListener('click', e => {
     if (e.target === modal) { modal.style.display = 'none'; nameInput.value = ''; }
@@ -119,19 +177,17 @@ function _render(root, trips, uid) {
   async function doCreate() {
     const name = nameInput.value.trim();
     if (!name) { nameInput.focus(); return; }
-    modal.style.display = 'none';
-    nameInput.value = '';
+    modal.style.display = 'none'; nameInput.value = '';
     const id = await _listStore.create(name);
     navigate(`/trip/${id}`);
   }
-
   root.querySelector('#modal-create').addEventListener('click', doCreate);
   nameInput.addEventListener('keydown', e => {
     if (e.key === 'Enter')  doCreate();
     if (e.key === 'Escape') { modal.style.display = 'none'; nameInput.value = ''; }
   });
 
-  // ── Trip card actions (delegated) ───────────────────────────────────────────
+  // ── Trip card actions (delegated) ─────────────────────────────────────────
   root.querySelector('#trips-grid')?.addEventListener('click', async e => {
     const card = e.target.closest('[data-trip-id]');
     if (!card) return;
@@ -151,12 +207,12 @@ function _render(root, trips, uid) {
       }
     } else if (e.target.closest('.trip-card-title')) {
       const isOwner = !uid || !trip?.ownerId || trip.ownerId === uid;
-      if (!isOwner) return; // only owner can rename
+      if (!isOwner) return;
       const titleEl = e.target.closest('.trip-card-title');
       const current = titleEl.textContent.trim();
-      const inp     = document.createElement('input');
+      const inp = document.createElement('input');
       inp.className = 'dark-input trip-rename-input';
-      inp.value     = current;
+      inp.value = current;
       titleEl.replaceWith(inp);
       inp.focus(); inp.select();
       const commit = async () => {
@@ -167,6 +223,29 @@ function _render(root, trips, uid) {
       inp.addEventListener('keydown', ke => { if (ke.key === 'Enter') inp.blur(); });
     }
   });
+}
+
+// ── Calendar rendering ────────────────────────────────────────────────────────
+
+function _renderCal(root, trips, uid) {
+  // Aggregate days from all owned trips only
+  const ownTrips = uid
+    ? trips.filter(t => !t.ownerId || t.ownerId === uid)
+    : trips;
+
+  // Flatten to a single days array — if two trips share a date, the one
+  // belonging to the earlier-created trip takes precedence.
+  const seen = new Set();
+  const allDays = ownTrips
+    .flatMap(t => (t.days || []).map(d => ({ ...d, _tripName: t.name })))
+    .filter(d => {
+      if (!d.date || seen.has(d.date)) return false;
+      seen.add(d.date);
+      return true;
+    })
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  renderCalendar(root, allDays, _calYear, _calMonth);
 }
 
 // ── Card template ─────────────────────────────────────────────────────────────
@@ -181,10 +260,9 @@ function _card(trip, uid) {
   const dests   = [...new Set(days.map(d => d.destination).filter(Boolean))];
   const shown   = dests.slice(0, 3);
 
-  const isOwner  = !uid || !trip.ownerId || trip.ownerId === uid;
-  const role     = trip.ownerId && uid && trip.ownerId !== uid
-    ? (trip.members?.[uid] || 'viewer')
-    : null;
+  const isOwner     = !uid || !trip.ownerId || trip.ownerId === uid;
+  const role        = trip.ownerId && uid && trip.ownerId !== uid
+    ? (trip.members?.[uid] || 'viewer') : null;
   const memberCount = (trip.memberUids || []).length;
 
   return `
@@ -234,7 +312,6 @@ function _applyFilter(trips, uid) {
 
 function _emptyMessage() {
   if (_filter === 'shared') return 'No trips have been shared with you yet.';
-  if (_filter === 'mine')   return 'No trips yet — create your first one above.';
   return 'No trips yet — create your first one above.';
 }
 
