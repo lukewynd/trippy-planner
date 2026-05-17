@@ -2,17 +2,19 @@
 // Two tabs: Trips grid (with All / My Trips / Shared with Me filter) and a
 // combined Calendar showing every day from all of the user's own trips.
 
-import { createTripListStore, checkForMigration, completeMigration } from './store.js';
+import { createTripListStore, checkForMigration, completeMigration, updateTripVisibility } from './store.js';
 import { getCurrentUser, renderAuthHeader } from './auth.js';
 import { renderCalendar } from './calendar.js';
 import { navigate } from './router.js';
 import { openShareModal } from './sharing.js';
+import { renderFriendsTab } from './friends.js';
 
-let _listStore  = null;
-let _filter     = 'all';      // trip-grid filter
-let _tab        = 'trips';    // 'trips' | 'calendar'
-let _calYear    = new Date().getFullYear();
-let _calMonth   = new Date().getMonth();
+let _listStore      = null;
+let _friendsTeardown = null;
+let _filter          = 'all';      // trip-grid filter
+let _tab             = 'trips';    // 'trips' | 'calendar' | 'friends'
+let _calYear         = new Date().getFullYear();
+let _calMonth        = new Date().getMonth();
 
 export function renderLanding(root) {
   const user        = getCurrentUser();
@@ -26,6 +28,7 @@ export function renderLanding(root) {
     if (hash !== '#/' && hash !== '#' && hash !== '') {
       // Navigated away — stop listening so Firestore writes from other views
       // don't clobber the current page.
+      _friendsTeardown?.(); _friendsTeardown = null;
       _listStore?.destroy(); _listStore = null; return;
     }
     _render(root, trips, uid);
@@ -35,6 +38,9 @@ export function renderLanding(root) {
 // ── Main render ───────────────────────────────────────────────────────────────
 
 function _render(root, trips, uid) {
+  // Tear down any active friends subscription before rebuilding the DOM.
+  _friendsTeardown?.(); _friendsTeardown = null;
+
   const migData    = checkForMigration();
   const filtered   = _applyFilter(trips, uid);
 
@@ -47,6 +53,7 @@ function _render(root, trips, uid) {
     <div class="landing-tabs">
       <button class="landing-tab ${_tab === 'trips'    ? 'active' : ''}" data-ltab="trips">Trips</button>
       <button class="landing-tab ${_tab === 'calendar' ? 'active' : ''}" data-ltab="calendar">Calendar</button>
+      <button class="landing-tab ${_tab === 'friends'  ? 'active' : ''}" data-ltab="friends">Trippy Friends</button>
     </div>
 
     <!-- ── Trips view ──────────────────────────────────────────────────── -->
@@ -107,6 +114,9 @@ function _render(root, trips, uid) {
       ` : ''}
     </div>
 
+    <!-- ── Friends view ─────────────────────────────────────────────────── -->
+    <div id="lv-friends" ${_tab !== 'friends' ? 'style="display:none"' : ''}></div>
+
     <!-- ── New-trip modal ──────────────────────────────────────────────── -->
     <div class="modal-overlay" id="new-trip-modal" style="display:none">
       <div class="modal-box">
@@ -128,14 +138,17 @@ function _render(root, trips, uid) {
       _tab = btn.dataset.ltab;
       root.querySelector('#lv-trips').style.display    = _tab === 'trips'    ? '' : 'none';
       root.querySelector('#lv-calendar').style.display = _tab === 'calendar' ? '' : 'none';
+      root.querySelector('#lv-friends').style.display  = _tab === 'friends'  ? '' : 'none';
       root.querySelectorAll('.landing-tab').forEach(b =>
         b.classList.toggle('active', b.dataset.ltab === _tab));
       if (_tab === 'calendar') _renderCal(root, trips, uid);
+      if (_tab === 'friends')  _initFriends(root, uid);
     });
   });
 
-  // ── Render calendar immediately if that tab is active ─────────────────────
+  // ── Render active tab immediately ──────────────────────────────────────────
   if (_tab === 'calendar') _renderCal(root, trips, uid);
+  if (_tab === 'friends')  _initFriends(root, uid);
 
   // ── Calendar prev / next ──────────────────────────────────────────────────
   root.querySelector('#cal-prev')?.addEventListener('click', () => {
@@ -203,6 +216,18 @@ function _render(root, trips, uid) {
     const id   = card.dataset.tripId;
     const trip = _listStore.getAll().find(t => t.id === id);
 
+    if (e.target.closest('.vis-btn')) {
+      const btn   = e.target.closest('.vis-btn');
+      const isOn  = btn.classList.contains('vis-on');
+      const isOwner = !uid || !trip?.ownerId || trip.ownerId === uid;
+      if (!isOwner) return;
+      btn.classList.toggle('vis-on',  !isOn);
+      btn.classList.toggle('vis-off',  isOn);
+      btn.title = !isOn ? 'Visible to friends — click to hide' : 'Hidden from friends — click to show';
+      updateTripVisibility(id, !isOn);
+      return;
+    }
+
     if (e.target.closest('.trip-open-btn')) {
       navigate(`/trip/${id}`);
     } else if (e.target.closest('.trip-globe-btn')) {
@@ -232,6 +257,14 @@ function _render(root, trips, uid) {
       inp.addEventListener('keydown', ke => { if (ke.key === 'Enter') inp.blur(); });
     }
   });
+}
+
+// ── Friends tab init ──────────────────────────────────────────────────────────
+
+function _initFriends(root, uid) {
+  _friendsTeardown?.(); _friendsTeardown = null;
+  const container = root.querySelector('#lv-friends');
+  if (container) _friendsTeardown = renderFriendsTab(container, uid);
 }
 
 // ── Calendar rendering ────────────────────────────────────────────────────────
@@ -274,9 +307,14 @@ function _card(trip, uid) {
     ? (trip.members?.[uid] || 'viewer') : null;
   const memberCount = (trip.memberUids || []).length;
 
-  const isPast = _isPast(trip);
+  const isVisible = trip.sharedWithFriends !== false;
+  const isPast    = _isPast(trip);
   return `
     <div class="trip-card ${role ? 'trip-card-shared' : ''} ${isPast ? 'trip-card-past' : ''}" data-trip-id="${trip.id}">
+      ${isOwner && uid ? `
+        <button class="vis-btn ${isVisible ? 'vis-on' : 'vis-off'}"
+          title="${isVisible ? 'Visible to friends — click to hide' : 'Hidden from friends — click to show'}">👁</button>
+      ` : ''}
       <div class="trip-card-top">
         <div class="trip-card-title-row">
           <div class="trip-card-title">${esc(trip.name)}</div>

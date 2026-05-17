@@ -67,9 +67,10 @@ function tsToMs(v) {
 
 function normTrip(data) {
   return {
-    memberUids: [],
-    members:    {},
-    ownerName:  '',
+    memberUids:        [],
+    members:           {},
+    ownerName:         '',
+    sharedWithFriends: true,
     ...data,
     createdAt: tsToMs(data.createdAt),
     updatedAt: tsToMs(data.updatedAt),
@@ -499,4 +500,84 @@ export function completeMigration(name, days, userId) {
     }).catch(console.warn);
   }
   return id;
+}
+
+// ── User profiles & friends ───────────────────────────────────────────────────
+
+export async function initUserProfile(uid, displayName, email) {
+  const db = getDb();
+  if (!db) return;
+  await setDoc(doc(db, 'users', uid), {
+    uid,
+    displayName: displayName || '',
+    email: (email || '').toLowerCase(),
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
+}
+
+export async function searchUserByEmail(email) {
+  const db = getDb();
+  if (!db) return null;
+  const snap = await getDocs(
+    query(collection(db, 'users'), where('email', '==', email.toLowerCase().trim()))
+  );
+  if (snap.empty) return null;
+  return snap.docs[0].data();
+}
+
+export function subscribeToMyProfile(uid, onChange) {
+  const db = getDb();
+  if (!db) { onChange({ friends: [], friendProfiles: {} }); return () => {}; }
+  return onSnapshot(doc(db, 'users', uid), snap => {
+    if (!snap.exists()) { onChange({ friends: [], friendProfiles: {} }); return; }
+    onChange(snap.data());
+  });
+}
+
+export async function addFriend(myUid, friend) {
+  // friend: { uid, displayName, email }
+  const db = getDb();
+  if (!db) return;
+  await setDoc(doc(db, 'users', myUid), {
+    friends: arrayUnion(friend.uid),
+    [`friendProfiles.${friend.uid}`]: {
+      displayName: friend.displayName || '',
+      email: friend.email || '',
+    },
+  }, { merge: true });
+}
+
+export async function removeFriend(myUid, friendUid) {
+  const db = getDb();
+  if (!db) return;
+  await updateDoc(doc(db, 'users', myUid), {
+    friends: arrayRemove(friendUid),
+    [`friendProfiles.${friendUid}`]: deleteField(),
+  });
+}
+
+export async function getFriendTrips(friendUid) {
+  const db = getDb();
+  if (!db) return [];
+  try {
+    const snap = await getDocs(query(
+      collection(db, 'trips'),
+      where('ownerId', '==', friendUid),
+      where('sharedWithFriends', '==', true)
+    ));
+    return snap.docs.map(d => normTrip({ id: d.id, ...d.data() }));
+  } catch (e) {
+    console.warn('getFriendTrips:', e);
+    return [];
+  }
+}
+
+export async function updateTripVisibility(tripId, visible) {
+  const trip = rdTrip(tripId);
+  if (trip) { trip.sharedWithFriends = visible; wrTrip(trip); }
+  const db = getDb();
+  if (!db) return;
+  try {
+    await updateDoc(doc(db, 'trips', tripId), { sharedWithFriends: visible });
+  } catch (e) { console.warn('updateTripVisibility:', e); }
 }

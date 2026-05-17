@@ -5,7 +5,7 @@ import { createRouter, navigate }    from './router.js';
 import { renderLanding }             from './landing.js';
 import { createApp }                 from './app.js';
 import { renderGlobe }               from './globe.js';
-import { joinViaInvite, migrateOldTrips } from './store.js';
+import { joinViaInvite, migrateOldTrips, initUserProfile } from './store.js';
 
 const root = document.getElementById('app');
 
@@ -72,6 +72,8 @@ initAuth(async user => {
     // landing page subscribes. Without this, the snapshot fires before old
     // trips are at the new path and they appear to vanish.
     await migrateOldTrips(user.uid, user.displayName || user.email || '');
+    // Upsert user profile so friends can find this user by email.
+    initUserProfile(user.uid, user.displayName || '', user.email || '');
   }
   router.refresh();
 });

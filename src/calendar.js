@@ -10,10 +10,10 @@ function esc(s) {
   return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;');
 }
 
-export function renderCalendar(container, trips, year, month) {
-  const titleEl = container.querySelector('#cal-title');
-  const headerEl = container.querySelector('#cal-days-header');
-  const bodyEl   = container.querySelector('#cal-body');
+export function renderCalendar(container, trips, year, month, ids = {}) {
+  const titleEl  = container.querySelector(ids.title  || '#cal-title');
+  const headerEl = container.querySelector(ids.header || '#cal-days-header');
+  const bodyEl   = container.querySelector(ids.body   || '#cal-body');
 
   if (!titleEl || !headerEl || !bodyEl) return;
 
