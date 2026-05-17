@@ -1,22 +1,41 @@
 // ── Store ─────────────────────────────────────────────────────────────────────
-// Two stores:
-//   createTripListStore  — manages the list of saved trips (landing page)
-//   createTripStore      — manages the days within a single trip (planner/globe)
+// Trip data is stored in the top-level Firestore 'trips' collection so that
+// multiple users can access the same trip document (sharing/collaboration).
+//
+// createTripListStore  — manages the list of saved trips (landing page)
+// createTripStore      — manages the days within a single trip (planner/globe)
 //
 // Both work in guest mode (localStorage only) and sync to Firestore when a
 // Firebase userId is provided.
 
 import {
-  collection, doc, setDoc, deleteDoc,
-  onSnapshot, query, orderBy, serverTimestamp,
+  collection, doc, setDoc, getDoc, getDocs, deleteDoc, updateDoc,
+  onSnapshot, query, where, orderBy, serverTimestamp,
+  arrayUnion, arrayRemove, deleteField,
 } from 'firebase/firestore';
 import { getDb } from './firebase.js';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Role helpers ──────────────────────────────────────────────────────────────
 
-const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
+export function getRole(trip, uid) {
+  if (!uid || !trip) return null;
+  if (trip.ownerId === uid) return 'owner';
+  return trip.members?.[uid] || null; // 'editor' | 'viewer' | null
+}
 
-const defaultDay = () => ({
+export function canEdit(trip, uid) {
+  const r = getRole(trip, uid);
+  return r === 'owner' || r === 'editor';
+}
+
+// ── ID / code generators ──────────────────────────────────────────────────────
+
+const newId   = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
+const newCode = () => Math.random().toString(36).slice(2, 9).toUpperCase();
+
+// ── Default day shape ─────────────────────────────────────────────────────────
+
+export const defaultDay = () => ({
   id:            newId(),
   date:          '',
   destination:   '',
@@ -34,11 +53,11 @@ const defaultDay = () => ({
 const LS_INDEX = 'trippy-planner-trips';
 const tripKey  = id => `trippy-trip-${id}`;
 
-const rdIndex = () => { try { return JSON.parse(localStorage.getItem(LS_INDEX) || '[]'); } catch { return []; } };
-const wrIndex = v  => { try { localStorage.setItem(LS_INDEX, JSON.stringify(v)); } catch {} };
-const rdTrip  = id => { try { return JSON.parse(localStorage.getItem(tripKey(id)) || 'null'); } catch { return null; } };
-const wrTrip  = t  => { try { localStorage.setItem(tripKey(t.id), JSON.stringify(t)); } catch {} };
-const rmTrip  = id => { try { localStorage.removeItem(tripKey(id)); } catch {} };
+export const rdIndex = () => { try { return JSON.parse(localStorage.getItem(LS_INDEX) || '[]'); } catch { return []; } };
+const wrIndex        = v  => { try { localStorage.setItem(LS_INDEX, JSON.stringify(v)); } catch {} };
+export const rdTrip  = id => { try { return JSON.parse(localStorage.getItem(tripKey(id)) || 'null'); } catch { return null; } };
+const wrTrip         = t  => { try { localStorage.setItem(tripKey(t.id), JSON.stringify(t)); } catch {} };
+const rmTrip         = id => { try { localStorage.removeItem(tripKey(id)); } catch {} };
 
 function tsToMs(v) {
   if (!v) return 0;
@@ -46,107 +65,158 @@ function tsToMs(v) {
   return typeof v === 'number' ? v : 0;
 }
 
+function normTrip(data) {
+  return {
+    memberUids: [],
+    members:    {},
+    ownerName:  '',
+    ...data,
+    createdAt: tsToMs(data.createdAt),
+    updatedAt: tsToMs(data.updatedAt),
+  };
+}
+
 // ── Trip List Store ───────────────────────────────────────────────────────────
+// Uses TWO Firestore subscriptions:
+//   q1 — trips owned by this user
+//   q2 — trips where this user appears in memberUids[]
+// Results are merged client-side and de-duped.
 
-export function createTripListStore(userId, onChange) {
-  let _trips = [];
-  let _unsub  = null;
+export function createTripListStore(userId, userDisplayName, onChange) {
+  let _ownedTrips  = [];
+  let _sharedTrips = [];
+  let _unsubOwned  = null;
+  let _unsubShared = null;
 
-  function loadLocal() {
-    return rdIndex().map(meta => rdTrip(meta.id) || { ...meta, days: [] });
-  }
-
-  function writeIndex() {
-    wrIndex(_trips.map(({ id, name, createdAt }) => ({ id, name, createdAt })));
+  function _merge() {
+    const all = [..._ownedTrips];
+    for (const t of _sharedTrips) {
+      if (!all.find(o => o.id === t.id)) all.push(t);
+    }
+    all.forEach(t => wrTrip(t));
+    wrIndex(all.map(({ id, name, createdAt }) => ({ id, name, createdAt })));
+    onChange([...all]);
   }
 
   function subscribeFirestore(uid) {
-    if (_unsub) { _unsub(); _unsub = null; }
+    if (_unsubOwned)  { _unsubOwned();  _unsubOwned  = null; }
+    if (_unsubShared) { _unsubShared(); _unsubShared = null; }
     const db = getDb();
     if (!db || !uid) return;
-    const q = query(collection(db, 'users', uid, 'trips'), orderBy('createdAt', 'desc'));
-    _unsub = onSnapshot(q, snap => {
-      _trips = snap.docs.map(d => {
-        const data = d.data();
-        return { ...data, createdAt: tsToMs(data.createdAt), updatedAt: tsToMs(data.updatedAt) };
-      });
-      _trips.forEach(t => wrTrip(t));
-      writeIndex();
-      onChange([..._trips]);
-    }, err => console.warn('Firestore trip list:', err));
+
+    const q1 = query(collection(db, 'trips'), where('ownerId', '==', uid), orderBy('updatedAt', 'desc'));
+    _unsubOwned = onSnapshot(q1, snap => {
+      _ownedTrips = snap.docs.map(d => normTrip({ id: d.id, ...d.data() }));
+      _merge();
+    }, err => console.warn('Firestore owned trips:', err));
+
+    const q2 = query(collection(db, 'trips'), where('memberUids', 'array-contains', uid));
+    _unsubShared = onSnapshot(q2, snap => {
+      _sharedTrips = snap.docs.map(d => normTrip({ id: d.id, ...d.data() }));
+      _merge();
+    }, err => console.warn('Firestore shared trips:', err));
   }
 
   async function pushFirestore(trip) {
     const db = getDb();
     if (!db || !userId) return;
     try {
-      await setDoc(doc(db, 'users', userId, 'trips', trip.id),
-        { ...trip, createdAt: trip.createdAt || serverTimestamp(), updatedAt: serverTimestamp() },
-        { merge: true });
+      await setDoc(doc(db, 'trips', trip.id), {
+        ...trip,
+        createdAt: trip.createdAt || serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
     } catch (e) { console.warn('Firestore write:', e); }
   }
 
-  // Init
-  _trips = loadLocal();
-  setTimeout(() => onChange([..._trips]), 0);
+  // Init from localStorage
+  const localAll = rdIndex().map(meta => rdTrip(meta.id) || { ...meta, days: [] });
+  _ownedTrips = localAll;
+  setTimeout(() => onChange([...localAll]), 0);
   if (userId) subscribeFirestore(userId);
 
   return {
-    getAll: () => [..._trips],
+    getAll: () => {
+      const all = [..._ownedTrips];
+      for (const t of _sharedTrips) {
+        if (!all.find(o => o.id === t.id)) all.push(t);
+      }
+      return all;
+    },
 
     async create(name) {
       const id   = newId();
-      const trip = { id, name, createdAt: Date.now(), updatedAt: Date.now(), days: [] };
-      _trips.unshift(trip);
+      const trip = {
+        id, name,
+        ownerId:    userId || null,
+        ownerName:  userDisplayName || '',
+        memberUids: [],
+        members:    {},
+        createdAt:  Date.now(),
+        updatedAt:  Date.now(),
+        days:       [],
+      };
+      _ownedTrips.unshift(trip);
       wrTrip(trip);
-      writeIndex();
-      onChange([..._trips]);
+      _merge();
+      onChange([...this.getAll()]);
       await pushFirestore(trip);
       return id;
     },
 
     async delete(id) {
-      _trips = _trips.filter(t => t.id !== id);
+      _ownedTrips  = _ownedTrips.filter(t => t.id !== id);
+      _sharedTrips = _sharedTrips.filter(t => t.id !== id);
       rmTrip(id);
-      writeIndex();
-      onChange([..._trips]);
+      _merge();
       const db = getDb();
       if (db && userId) {
-        try { await deleteDoc(doc(db, 'users', userId, 'trips', id)); } catch {}
+        try { await deleteDoc(doc(db, 'trips', id)); } catch {}
       }
     },
 
     async rename(id, name) {
-      const trip = _trips.find(t => t.id === id);
+      const trip = this.getAll().find(t => t.id === id);
       if (!trip) return;
-      trip.name = name;
+      trip.name      = name;
       trip.updatedAt = Date.now();
       wrTrip(trip);
-      writeIndex();
-      onChange([..._trips]);
-      await pushFirestore(trip);
-    },
-
-    setUserId(uid) {
-      userId = uid;
-      if (uid) {
-        subscribeFirestore(uid);
-      } else {
-        if (_unsub) { _unsub(); _unsub = null; }
-        _trips = loadLocal();
-        onChange([..._trips]);
+      onChange([...this.getAll()]);
+      const db = getDb();
+      if (db && userId) {
+        try { await updateDoc(doc(db, 'trips', id), { name, updatedAt: serverTimestamp() }); } catch {}
       }
     },
 
-    destroy() { if (_unsub) { _unsub(); _unsub = null; } },
+    setUserId(uid, displayName) {
+      userId          = uid;
+      userDisplayName = displayName || '';
+      if (uid) {
+        subscribeFirestore(uid);
+      } else {
+        if (_unsubOwned)  { _unsubOwned();  _unsubOwned  = null; }
+        if (_unsubShared) { _unsubShared(); _unsubShared = null; }
+        _ownedTrips  = rdIndex().map(meta => rdTrip(meta.id) || { ...meta, days: [] });
+        _sharedTrips = [];
+        onChange([..._ownedTrips]);
+      }
+    },
+
+    destroy() {
+      if (_unsubOwned)  { _unsubOwned();  _unsubOwned  = null; }
+      if (_unsubShared) { _unsubShared(); _unsubShared = null; }
+    },
   };
 }
 
 // ── Trip Store (days within one trip) ────────────────────────────────────────
 
 export function createTripStore(tripId, userId, onChange) {
-  let _trip = rdTrip(tripId) || { id: tripId, name: 'Trip', createdAt: Date.now(), updatedAt: Date.now(), days: [] };
-  let _days = Array.isArray(_trip.days) ? _trip.days : [];
+  let _trip = rdTrip(tripId) || {
+    id: tripId, name: 'Trip', ownerId: null, ownerName: '',
+    memberUids: [], members: {}, createdAt: Date.now(), updatedAt: Date.now(), days: [],
+  };
+  let _days  = Array.isArray(_trip.days) ? _trip.days : [];
   let _unsub = null;
   let _timer = null;
 
@@ -162,7 +232,7 @@ export function createTripStore(tripId, userId, onChange) {
       const db = getDb();
       if (!db || !userId) return;
       try {
-        await setDoc(doc(db, 'users', userId, 'trips', tripId),
+        await setDoc(doc(db, 'trips', tripId),
           { ..._trip, days: _days, updatedAt: serverTimestamp() },
           { merge: true });
       } catch (e) { console.warn('Firestore write:', e); }
@@ -178,10 +248,10 @@ export function createTripStore(tripId, userId, onChange) {
   if (userId) {
     const db = getDb();
     if (db) {
-      _unsub = onSnapshot(doc(db, 'users', userId, 'trips', tripId), snap => {
+      _unsub = onSnapshot(doc(db, 'trips', tripId), snap => {
         if (!snap.exists()) return;
         const data = snap.data();
-        _trip = { ...data, createdAt: tsToMs(data.createdAt), updatedAt: tsToMs(data.updatedAt) };
+        _trip = normTrip({ id: tripId, ...data });
         _days = Array.isArray(_trip.days) ? _trip.days : [];
         saveLocal();
         onChange([..._days]);
@@ -191,6 +261,7 @@ export function createTripStore(tripId, userId, onChange) {
 
   return {
     tripName: () => _trip.name || 'Trip',
+    tripData: () => ({ ..._trip }),
 
     getAll: () => [..._days],
 
@@ -243,7 +314,102 @@ export function createTripStore(tripId, userId, onChange) {
   };
 }
 
-// ── Old-format migration ──────────────────────────────────────────────────────
+// ── Sharing functions ─────────────────────────────────────────────────────────
+
+export async function createInvite(tripId, role, uid) {
+  const db = getDb();
+  if (!db || !uid) throw new Error('Must be signed in to share');
+  const code = newCode();
+  await setDoc(doc(db, 'invites', code), {
+    tripId,
+    role,
+    createdBy: uid,
+    createdAt: serverTimestamp(),
+  });
+  return code;
+}
+
+export async function joinViaInvite(code, uid) {
+  const db = getDb();
+  if (!db) throw new Error('Firebase not configured');
+  const inviteSnap = await getDoc(doc(db, 'invites', code));
+  if (!inviteSnap.exists()) throw new Error('Invite not found or already used');
+  const { tripId, role } = inviteSnap.data();
+  await updateDoc(doc(db, 'trips', tripId), {
+    [`members.${uid}`]: role,
+    memberUids: arrayUnion(uid),
+  });
+  return tripId;
+}
+
+export async function updateMemberRole(tripId, targetUid, newRole) {
+  const db = getDb();
+  if (!db) return;
+  await updateDoc(doc(db, 'trips', tripId), {
+    [`members.${targetUid}`]: newRole,
+  });
+}
+
+export async function removeMember(tripId, targetUid) {
+  const db = getDb();
+  if (!db) return;
+  await updateDoc(doc(db, 'trips', tripId), {
+    [`members.${targetUid}`]: deleteField(),
+    memberUids: arrayRemove(targetUid),
+  });
+}
+
+// Copy selected days into a different trip (for the viewer "copy days" feature)
+export async function copyDaysToTrip(days, targetTripId, uid) {
+  const existing = rdTrip(targetTripId) || {
+    id: targetTripId, name: 'Trip', ownerId: null, ownerName: '',
+    memberUids: [], members: {}, createdAt: Date.now(), updatedAt: Date.now(), days: [],
+  };
+  const newDays = [
+    ...existing.days,
+    ...days.map(d => ({ ...d, id: newId() })),
+  ].sort((a, b) => a.date.localeCompare(b.date));
+  existing.days      = newDays;
+  existing.updatedAt = Date.now();
+  wrTrip(existing);
+
+  const db = getDb();
+  if (db && uid) {
+    try {
+      await updateDoc(doc(db, 'trips', targetTripId), {
+        days: newDays,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (e) { console.warn('copyDaysToTrip Firestore:', e); }
+  }
+}
+
+// ── Migration: old users/{uid}/trips/ → trips/ ────────────────────────────────
+
+export async function migrateOldTrips(uid, displayName) {
+  const migKey = `trippy-migrated-v2-${uid}`;
+  if (localStorage.getItem(migKey)) return;
+  const db = getDb();
+  if (!db) { localStorage.setItem(migKey, '1'); return; }
+  try {
+    const oldSnap = await getDocs(collection(db, 'users', uid, 'trips'));
+    if (oldSnap.empty) { localStorage.setItem(migKey, '1'); return; }
+    for (const d of oldSnap.docs) {
+      const data = d.data();
+      await setDoc(doc(db, 'trips', d.id), {
+        ...data,
+        id:         d.id,
+        ownerId:    uid,
+        ownerName:  displayName || '',
+        memberUids: data.memberUids || [],
+        members:    data.members   || {},
+      }, { merge: true });
+    }
+    localStorage.setItem(migKey, '1');
+  } catch (e) { console.warn('Old-path migration failed:', e); }
+}
+
+// ── Old local-format migration (v1 single-trip localStorage) ──────────────────
 
 export function checkForMigration() {
   try {
@@ -260,18 +426,28 @@ export function checkForMigration() {
 
 export function completeMigration(name, days, userId) {
   const id   = newId();
-  const trip = { id, name, createdAt: Date.now(), updatedAt: Date.now(), days };
+  const trip = {
+    id, name,
+    ownerId:    userId || null,
+    ownerName:  '',
+    memberUids: [],
+    members:    {},
+    createdAt:  Date.now(),
+    updatedAt:  Date.now(),
+    days,
+  };
   wrTrip(trip);
   const idx = rdIndex();
   idx.unshift({ id, name, createdAt: trip.createdAt });
   wrIndex(idx);
   localStorage.removeItem('trippy-planner-data');
-
   const db = getDb();
   if (db && userId) {
-    setDoc(doc(db, 'users', userId, 'trips', id),
-      { ...trip, createdAt: serverTimestamp(), updatedAt: serverTimestamp() })
-      .catch(console.warn);
+    setDoc(doc(db, 'trips', id), {
+      ...trip,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }).catch(console.warn);
   }
   return id;
 }
