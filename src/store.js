@@ -106,7 +106,13 @@ export function createTripListStore(userId, userDisplayName, onChange) {
 
     const q1 = query(collection(db, 'trips'), where('ownerId', '==', uid), orderBy('updatedAt', 'desc'));
     _unsubOwned = onSnapshot(q1, snap => {
-      _ownedTrips = snap.docs.map(d => normTrip({ id: d.id, ...d.data() }));
+      const fromFirestore = snap.docs.map(d => normTrip({ id: d.id, ...d.data() }));
+      // Merge: keep any locally-held trips not yet visible in Firestore (e.g.
+      // during migration from the old users/{uid}/trips/ path, or while a write
+      // is still propagating). Firestore is the source of truth for anything it
+      // does know about; local-only entries are preserved until confirmed.
+      const localOnly = _ownedTrips.filter(l => !fromFirestore.find(f => f.id === l.id));
+      _ownedTrips = [...fromFirestore, ...localOnly];
       _merge();
     }, err => console.warn('Firestore owned trips:', err));
 

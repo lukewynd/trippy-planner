@@ -66,10 +66,12 @@ const router = createRouter({
   },
 });
 
-initAuth(user => {
+initAuth(async user => {
   if (user) {
-    // Migrate old users/{uid}/trips/ data to top-level trips/ collection
-    migrateOldTrips(user.uid, user.displayName || user.email || '');
+    // Await migration so the trips/ Firestore query is complete before the
+    // landing page subscribes. Without this, the snapshot fires before old
+    // trips are at the new path and they appear to vanish.
+    await migrateOldTrips(user.uid, user.displayName || user.email || '');
   }
   router.refresh();
 });
