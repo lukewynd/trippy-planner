@@ -94,7 +94,18 @@ export function createTripListStore(userId, userDisplayName, onChange) {
       if (!all.find(o => o.id === t.id)) all.push(t);
     }
     all.forEach(t => wrTrip(t));
-    wrIndex(all.map(({ id, name, createdAt }) => ({ id, name, createdAt })));
+
+    // Preserve localStorage index entries for trips whose data is still in
+    // localStorage but aren't in the current in-memory snapshot yet (e.g.
+    // migration timing gap or slow Firestore propagation). Explicitly deleted
+    // trips are excluded because rmTrip() has already cleared their data.
+    const inMemoryIds = new Set(all.map(t => t.id));
+    const preserved   = rdIndex().filter(m => !inMemoryIds.has(m.id) && !!rdTrip(m.id));
+    wrIndex([
+      ...all.map(({ id, name, createdAt }) => ({ id, name, createdAt })),
+      ...preserved,
+    ]);
+
     onChange([...all]);
   }
 
@@ -164,8 +175,7 @@ export function createTripListStore(userId, userDisplayName, onChange) {
       };
       _ownedTrips.unshift(trip);
       wrTrip(trip);
-      _merge();
-      onChange([...this.getAll()]);
+      _merge(); // _merge already calls onChange
       await pushFirestore(trip);
       return id;
     },
