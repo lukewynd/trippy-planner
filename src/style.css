@@ -743,8 +743,9 @@ body {
 
 .landing-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 18px;
+  align-items: start;
 }
 
 .trip-card {
@@ -830,6 +831,7 @@ body {
 
 .trip-card-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: auto;
 }
@@ -1149,8 +1151,15 @@ body {
 .role-badge.role-editor { background: var(--blue-bg); color: var(--blue); }
 .role-badge.role-viewer { background: var(--bg-elevated); color: var(--text-muted); }
 
-/* ── Shared trip card enhancements ───────────────────────── */
+/* ── Shared / past trip card enhancements ────────────────── */
 .trip-card-shared { border-left: 2px solid var(--blue); }
+
+.trip-card-past {
+  opacity: 0.7;
+}
+.trip-card-past .trip-progress-fill {
+  background: var(--text-faint);
+}
 
 .trip-card-title-row {
   display: flex;
@@ -1335,10 +1344,6 @@ body {
 .join-hint      { color: var(--text-faint) !important; font-style: italic; }
 
 /* ── Responsive additions ─────────────────────────────────── */
-@media (max-width: 900px) {
-  .landing-grid { grid-template-columns: repeat(2, 1fr); }
-}
-
 @media (max-width: 640px) {
   .landing-grid { grid-template-columns: 1fr; }
   .topbar-left, .topbar-right { gap: 8px; }

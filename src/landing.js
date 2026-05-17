@@ -62,6 +62,7 @@ function _render(root, trips, uid) {
           <button class="filter-tab ${_filter === 'all'    ? 'active' : ''}" data-filter="all">All Trips</button>
           <button class="filter-tab ${_filter === 'mine'   ? 'active' : ''}" data-filter="mine">My Trips</button>
           <button class="filter-tab ${_filter === 'shared' ? 'active' : ''}" data-filter="shared">Shared with Me</button>
+          <button class="filter-tab ${_filter === 'past'   ? 'active' : ''}" data-filter="past">Past Trips</button>
         </div>
       ` : ''}
 
@@ -265,8 +266,9 @@ function _card(trip, uid) {
     ? (trip.members?.[uid] || 'viewer') : null;
   const memberCount = (trip.memberUids || []).length;
 
+  const isPast = _isPast(trip);
   return `
-    <div class="trip-card ${role ? 'trip-card-shared' : ''}" data-trip-id="${trip.id}">
+    <div class="trip-card ${role ? 'trip-card-shared' : ''} ${isPast ? 'trip-card-past' : ''}" data-trip-id="${trip.id}">
       <div class="trip-card-top">
         <div class="trip-card-title-row">
           <div class="trip-card-title">${esc(trip.name)}</div>
@@ -304,13 +306,26 @@ function _card(trip, uid) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// A trip is "past" when it has at least one day and the latest day date
+// is strictly before today (YYYY-MM-DD lexicographic comparison is correct).
+function _isPast(trip) {
+  const dates = (trip.days || []).map(d => d.date).filter(Boolean).sort();
+  if (!dates.length) return false;
+  const today = new Date().toISOString().slice(0, 10);
+  return dates[dates.length - 1] < today;
+}
+
 function _applyFilter(trips, uid) {
-  if (_filter === 'mine')   return trips.filter(t => !uid || !t.ownerId || t.ownerId === uid);
-  if (_filter === 'shared') return trips.filter(t => uid && t.ownerId && t.ownerId !== uid);
-  return trips;
+  if (_filter === 'past') return trips.filter(t => _isPast(t));
+  // All other filters exclude past trips
+  const active = trips.filter(t => !_isPast(t));
+  if (_filter === 'mine')   return active.filter(t => !uid || !t.ownerId || t.ownerId === uid);
+  if (_filter === 'shared') return active.filter(t => uid && t.ownerId && t.ownerId !== uid);
+  return active; // 'all' = active trips only
 }
 
 function _emptyMessage() {
+  if (_filter === 'past')   return 'No past trips yet.';
   if (_filter === 'shared') return 'No trips have been shared with you yet.';
   return 'No trips yet — create your first one above.';
 }
