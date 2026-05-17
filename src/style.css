@@ -1029,6 +1029,36 @@ body {
   padding: 24px 14px;
 }
 
+/* ── Leaflet dark theme overrides ────────────────────────── */
+.leaflet-container { background: var(--bg-base); font-family: var(--font-main); }
+
+.leaflet-control-zoom a {
+  background: var(--bg-elevated) !important;
+  border-color: var(--border-light) !important;
+  color: var(--text-primary) !important;
+}
+.leaflet-control-zoom a:hover { background: var(--bg-hover) !important; }
+.leaflet-control-zoom { border: 1px solid var(--border-light) !important; }
+
+.leaflet-control-attribution {
+  background: rgba(11,13,20,0.8) !important;
+  color: var(--text-faint) !important;
+  font-size: 10px !important;
+}
+.leaflet-control-attribution a { color: var(--text-faint) !important; }
+
+.map-tooltip.leaflet-tooltip {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-main);
+  font-size: 12px;
+  padding: 4px 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+.map-tooltip.leaflet-tooltip::before { border-top-color: var(--border-light); }
+
 /* ── Responsive additions ─────────────────────────────────── */
 @media (max-width: 900px) {
   .landing-grid { grid-template-columns: repeat(2, 1fr); }

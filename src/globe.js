@@ -1,20 +1,23 @@
-// ── Globe View ────────────────────────────────────────────────────────────────
-// 3D interactive globe (globe.gl / Three.js) showing the trip route.
-// Left panel: globe canvas. Right panel: scrollable day list.
-// Clicking a day card animates the globe to that destination.
+// ── Map View ──────────────────────────────────────────────────────────────────
+// Leaflet + CartoDB Dark tiles (free, no API key, unlimited use).
+// Left: interactive map with route lines + markers.
+// Right: scrollable day list — click a day to fly the map there.
 
-import Globe from 'globe.gl';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import { createTripStore } from './store.js';
 import { geocodeAll }      from './geocode.js';
 import { getCurrentUser, renderAuthHeader } from './auth.js';
 import { navigate }        from './router.js';
 
-let _store  = null;
-let _globe  = null;
+let _store        = null;
+let _map          = null;
+let _panelHandler = null; // tracked so we can remove before re-adding
 
 export function renderGlobe(root, tripId) {
   if (_store) { _store.destroy(); _store = null; }
-  if (_globe) { _globe = null; }
+  if (_map)   { _map.remove(); _map = null; }
+  _panelHandler = null;
 
   const uid = getCurrentUser()?.uid || null;
 
@@ -29,7 +32,7 @@ export function renderGlobe(root, tripId) {
       </div>
       <div class="globe-layout">
         <div class="globe-container" id="globe-container">
-          <div class="globe-loading" id="globe-loading">Geocoding destinations…</div>
+          <div id="map-inner" style="width:100%;height:100%"></div>
         </div>
         <div class="globe-panel">
           <div class="globe-panel-title">Trip Days</div>
@@ -44,114 +47,102 @@ export function renderGlobe(root, tripId) {
   renderAuthHeader(root);
   root.querySelector('#globe-back').addEventListener('click', () => navigate(`/trip/${tripId}`));
 
-  _store = createTripStore(tripId, uid, days => _buildGlobe(root, days, tripId));
-  _buildGlobe(root, _store.getAll(), tripId);
+  // Init map — CartoDB Dark Matter tiles, no API key needed
+  _map = L.map('map-inner', { zoomControl: true }).setView([20, 10], 2);
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: 'abcd',
+    maxZoom: 19,
+  }).addTo(_map);
+
+  _store = createTripStore(tripId, uid, days => _updateMap(root, days, tripId));
+  _updateMap(root, _store.getAll(), tripId);
 }
 
-async function _buildGlobe(root, days, tripId) {
+async function _updateMap(root, days, tripId) {
   const panel = root.querySelector('#globe-day-list');
-  const loading = root.querySelector('#globe-loading');
-  if (!panel) return;
+  if (!panel || !_map) return;
+
+  // Remove old panel click handler before rebuilding
+  if (_panelHandler) { panel.removeEventListener('click', _panelHandler); _panelHandler = null; }
+
+  // Clear all non-tile layers
+  _map.eachLayer(layer => { if (!(layer instanceof L.TileLayer)) _map.removeLayer(layer); });
 
   if (days.length === 0) {
-    panel.innerHTML = `<div class="globe-empty">No days in this trip yet. <button class="ghost-btn globe-back-link" style="display:inline;border:none;padding:0;color:var(--accent)">Add some →</button></div>`;
-    panel.querySelector('.globe-back-link')?.addEventListener('click', () => navigate(`/trip/${tripId}`));
-    if (loading) loading.style.display = 'none';
+    panel.innerHTML = `<div class="globe-empty">No days in this trip yet.</div>`;
     return;
   }
 
-  // Render day list immediately (instant feedback)
-  panel.innerHTML = days.map((d, i) => `
-    <div class="globe-day-item" data-dest="${esc(d.destination)}" data-idx="${i}">
-      <div class="globe-day-date">${_fmtShort(d.date)}</div>
-      <div class="globe-day-dest">${esc(d.destination || 'Unknown')}</div>
-      ${d.event ? `<div class="globe-day-event">${esc(d.event)}</div>` : ''}
-      ${d.travelDay ? '<span class="globe-travel-badge">Travel</span>' : ''}
-    </div>
-  `).join('');
+  // Render day list immediately
+  panel.innerHTML =
+    `<div class="globe-panel-hint geocoding-hint">Locating destinations…</div>` +
+    days.map((d, i) => `
+      <div class="globe-day-item" data-dest="${esc(d.destination)}" data-idx="${i}">
+        <div class="globe-day-date">${_fmtShort(d.date)}</div>
+        <div class="globe-day-dest">${esc(d.destination || 'Unknown')}</div>
+        ${d.event ? `<div class="globe-day-event">${esc(d.event)}</div>` : ''}
+        ${d.travelDay ? '<span class="globe-travel-badge">Travel</span>' : ''}
+      </div>
+    `).join('');
 
   // Geocode unique destinations
-  if (loading) { loading.textContent = 'Geocoding destinations…'; loading.style.display = 'flex'; }
   const uniqueDests = [...new Set(days.map(d => d.destination).filter(Boolean))];
   const coords = await geocodeAll(uniqueDests);
-  if (loading) loading.style.display = 'none';
-
-  // Points
-  const points = uniqueDests
-    .filter(d => coords[d])
-    .map(dest => ({ dest, lat: coords[dest].lat, lng: coords[dest].lng }));
-
-  // Arcs: connect days where destination changes
-  const arcs = [];
-  for (let i = 1; i < days.length; i++) {
-    const from = days[i - 1].destination;
-    const to   = days[i].destination;
-    if (from !== to && coords[from] && coords[to]) {
-      arcs.push({ startLat: coords[from].lat, startLng: coords[from].lng,
-                  endLat:   coords[to].lat,   endLng:   coords[to].lng });
-    }
-  }
-
-  const container = root.querySelector('#globe-container');
-  if (!container) return;
-  // Clear previous globe (if re-called on data update)
-  container.innerHTML = '<div class="globe-loading" id="globe-loading" style="display:none"></div>';
-
-  const el = document.createElement('div');
-  el.style.cssText = 'width:100%;height:100%';
-  container.appendChild(el);
-
-  _globe = Globe()(el);
-  _globe
-    .globeImageUrl('https://unpkg.com/three-globe/example/img/earth-night.jpg')
-    .bumpImageUrl('https://unpkg.com/three-globe/example/img/earth-topology.png')
-    .backgroundColor('rgba(0,0,0,0)')
-    .atmosphereColor('#7c6af7')
-    .atmosphereAltitude(0.18)
-    .pointsData(points)
-    .pointLat('lat')
-    .pointLng('lng')
-    .pointColor(() => '#7c6af7')
-    .pointRadius(0.45)
-    .pointAltitude(0.02)
-    .arcsData(arcs)
-    .arcStartLat('startLat').arcStartLng('startLng')
-    .arcEndLat('endLat').arcEndLng('endLng')
-    .arcColor(() => '#7c6af7')
-    .arcStroke(0.5)
-    .arcAltitudeAutoScale(0.4)
-    .arcDashLength(0.5)
-    .arcDashGap(0.2)
-    .arcDashAnimateTime(2000);
-
-  // Auto-rotate; stop on first user touch
-  const ctrl = _globe.controls();
-  ctrl.autoRotate = true;
-  ctrl.autoRotateSpeed = 0.5;
-  el.addEventListener('pointerdown', () => { ctrl.autoRotate = false; }, { passive: true });
-
-  // Fly to first destination
-  if (points.length > 0) {
-    _globe.pointOfView({ lat: points[0].lat, lng: points[0].lng, altitude: 2.5 }, 1200);
-  }
+  panel.querySelector('.geocoding-hint')?.remove();
 
   // Highlight first day
-  const first = panel.querySelector('.globe-day-item');
-  if (first) first.classList.add('active');
+  panel.querySelector('.globe-day-item')?.classList.add('active');
 
-  // Day click → fly globe there
-  panel.addEventListener('click', e => {
+  // Route line (ordered by day)
+  const routeCoords = days
+    .filter(d => d.destination && coords[d.destination])
+    .map(d => [coords[d.destination].lat, coords[d.destination].lng]);
+
+  if (routeCoords.length > 1) {
+    L.polyline(routeCoords, {
+      color: '#7c6af7',
+      weight: 2.5,
+      opacity: 0.85,
+      dashArray: '6 10',
+    }).addTo(_map);
+  }
+
+  // Circle markers for each unique destination
+  const markers = {};
+  for (const dest of uniqueDests) {
+    if (!coords[dest]) continue;
+    const m = L.circleMarker([coords[dest].lat, coords[dest].lng], {
+      radius: 7,
+      fillColor: '#7c6af7',
+      color: '#fff',
+      weight: 1.5,
+      fillOpacity: 0.9,
+    }).addTo(_map);
+    m.bindTooltip(dest, { direction: 'top', offset: [0, -8], className: 'map-tooltip' });
+    markers[dest] = m;
+  }
+
+  // Fit map to show all markers
+  if (routeCoords.length > 0) {
+    _map.fitBounds(L.latLngBounds(routeCoords), { padding: [50, 50], maxZoom: 8 });
+  }
+
+  // Day click → fly map to that destination
+  _panelHandler = e => {
     const item = e.target.closest('.globe-day-item');
     if (!item) return;
     const dest = item.dataset.dest;
     if (dest && coords[dest]) {
-      ctrl.autoRotate = false;
-      _globe.pointOfView({ lat: coords[dest].lat, lng: coords[dest].lng, altitude: 2 }, 1000);
+      _map.flyTo([coords[dest].lat, coords[dest].lng], 10, { duration: 1.5 });
       panel.querySelectorAll('.globe-day-item').forEach(el => el.classList.remove('active'));
       item.classList.add('active');
       item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      markers[dest]?.openTooltip();
     }
-  });
+  };
+  panel.addEventListener('click', _panelHandler);
 }
 
 function _fmtShort(iso) {
