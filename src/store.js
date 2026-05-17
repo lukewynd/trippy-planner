@@ -211,6 +211,16 @@ export function createTripListStore(userId, userDisplayName, onChange) {
 
 // ── Trip Store (days within one trip) ────────────────────────────────────────
 
+// Lightweight fingerprint of the days array. Key-order-independent and covers
+// every editable field. Used to detect whether a Firestore snapshot contains
+// genuinely new data before deciding to re-render.
+function _daysFP(days) {
+  return days.map(d =>
+    `${d.id}|${d.date}|${d.destination}|${d.event}|${d.accommodation}|` +
+    `${d.accomCost}|${d.travelDetails}|${d.travelCost}|${d.travelDay}|${d.finalised}`
+  ).join('~');
+}
+
 export function createTripStore(tripId, userId, onChange) {
   let _trip = rdTrip(tripId) || {
     id: tripId, name: 'Trip', ownerId: null, ownerName: '',
@@ -266,12 +276,16 @@ export function createTripStore(tripId, userId, onChange) {
     if (db) {
       _unsub = onSnapshot(doc(db, 'trips', tripId), snap => {
         if (!snap.exists()) return;
-        // Suppress echoes of our own writes — the local state is already correct
-        // and re-rendering would interrupt any in-progress editing.
+        // Suppress echoes of our own writes — local state is already correct.
         if (_pendingWrite) return;
         const data = snap.data();
+        const incomingDays = Array.isArray(data.days) ? data.days : [];
+        // Firebase fires onSnapshot twice on load (cache then server). Skip the
+        // second fire if the data hasn't actually changed — this also covers any
+        // echo that slips through the _pendingWrite window.
+        if (_daysFP(incomingDays) === _daysFP(_days)) return;
         _trip = normTrip({ id: tripId, ...data });
-        _days = Array.isArray(_trip.days) ? _trip.days : [];
+        _days = incomingDays;
         saveLocal();
         onChange([..._days]);
       }, err => console.warn('Firestore trip:', err));
