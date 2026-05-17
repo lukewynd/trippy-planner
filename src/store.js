@@ -525,35 +525,71 @@ export async function searchUserByEmail(email) {
   return snap.docs[0].data();
 }
 
-export function subscribeToMyProfile(uid, onChange) {
+// ── Friend requests (request → accept model) ──────────────────────────────────
+// Request ID is always "{senderUid}_{recipientUid}" — deterministic, prevents
+// duplicate requests.
+
+export async function sendFriendRequest(myUid, myDisplayName, myEmail, toUser) {
   const db = getDb();
-  if (!db) { onChange({ friends: [], friendProfiles: {} }); return () => {}; }
-  return onSnapshot(doc(db, 'users', uid), snap => {
-    if (!snap.exists()) { onChange({ friends: [], friendProfiles: {} }); return; }
-    onChange(snap.data());
+  if (!db) return;
+  const reqId = `${myUid}_${toUser.uid}`;
+  await setDoc(doc(db, 'friendRequests', reqId), {
+    from:            myUid,
+    fromDisplayName: myDisplayName || '',
+    fromEmail:       (myEmail       || '').toLowerCase(),
+    to:              toUser.uid,
+    toDisplayName:   toUser.displayName || '',
+    toEmail:         (toUser.email      || '').toLowerCase(),
+    status:          'pending',
+    createdAt:       serverTimestamp(),
   });
 }
 
-export async function addFriend(myUid, friend) {
-  // friend: { uid, displayName, email }
+export async function acceptFriendRequest(reqId) {
   const db = getDb();
   if (!db) return;
-  await setDoc(doc(db, 'users', myUid), {
-    friends: arrayUnion(friend.uid),
-    [`friendProfiles.${friend.uid}`]: {
-      displayName: friend.displayName || '',
-      email: friend.email || '',
+  await updateDoc(doc(db, 'friendRequests', reqId), { status: 'accepted' });
+}
+
+export async function declineFriendRequest(reqId) {
+  const db = getDb();
+  if (!db) return;
+  await updateDoc(doc(db, 'friendRequests', reqId), { status: 'declined' });
+}
+
+export async function removeFriendRequest(reqId) {
+  const db = getDb();
+  if (!db) return;
+  await deleteDoc(doc(db, 'friendRequests', reqId));
+}
+
+export function subscribeToMyFriendRequests(uid, onChange) {
+  // onChange(sent[], received[])
+  // sent[]     — all requests I initiated (pending / accepted / declined)
+  // received[] — pending requests others sent me
+  const db = getDb();
+  if (!db) { onChange([], []); return () => {}; }
+
+  let _sent = [], _recv = [];
+  const notify = () => onChange([..._sent], [..._recv]);
+
+  const unsubSent = onSnapshot(
+    query(collection(db, 'friendRequests'), where('from', '==', uid)),
+    snap => { _sent = snap.docs.map(d => ({ id: d.id, ...d.data() })); notify(); },
+    err => console.warn('friendRequests (sent):', err)
+  );
+  const unsubRecv = onSnapshot(
+    query(collection(db, 'friendRequests'), where('to', '==', uid)),
+    snap => {
+      _recv = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(r => r.status === 'pending');
+      notify();
     },
-  }, { merge: true });
-}
+    err => console.warn('friendRequests (recv):', err)
+  );
 
-export async function removeFriend(myUid, friendUid) {
-  const db = getDb();
-  if (!db) return;
-  await updateDoc(doc(db, 'users', myUid), {
-    friends: arrayRemove(friendUid),
-    [`friendProfiles.${friendUid}`]: deleteField(),
-  });
+  return () => { unsubSent(); unsubRecv(); };
 }
 
 export async function getFriendTrips(friendUid) {

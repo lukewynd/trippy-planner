@@ -1,12 +1,16 @@
 // ── Trippy Friends Tab ────────────────────────────────────────────────────────
-// Split-pane view: friend list on the left, selected friend's calendar on right.
+// Left pane: incoming requests + accepted friends + pending sent requests.
+// Right pane: selected friend's calendar.
 
-import { subscribeToMyProfile, addFriend, removeFriend, getFriendTrips, searchUserByEmail } from './store.js';
+import { getCurrentUser } from './auth.js';
+import {
+  searchUserByEmail, sendFriendRequest,
+  acceptFriendRequest, declineFriendRequest, removeFriendRequest,
+  subscribeToMyFriendRequests, getFriendTrips,
+} from './store.js';
 import { renderCalendar } from './calendar.js';
 
-// Persist the selected friend uid across re-renders caused by store updates.
 let _lastSelectedUid = null;
-
 const CAL_IDS = { title: '#fl-cal-title', header: '#fl-cal-header', body: '#fl-cal-body' };
 
 export function renderFriendsTab(container, uid) {
@@ -19,11 +23,12 @@ export function renderFriendsTab(container, uid) {
     return () => {};
   }
 
-  let _friends     = [];
-  let _selected    = null;
+  let _sent     = [];   // requests I sent
+  let _received = [];   // pending requests sent to me
+  let _selected = null; // friend currently shown in calendar
   let _friendTrips = [];
-  let _calYear     = new Date().getFullYear();
-  let _calMonth    = new Date().getMonth();
+  let _calYear  = new Date().getFullYear();
+  let _calMonth = new Date().getMonth();
 
   container.innerHTML = `
     <div class="friends-layout">
@@ -35,13 +40,13 @@ export function renderFriendsTab(container, uid) {
           <button class="add-btn" id="fl-add-btn">Add</button>
         </div>
         <div id="fl-status" class="fl-status"></div>
-        <div id="fl-list"   class="fl-list"></div>
+        <div id="fl-panel-body" class="fl-panel-body"></div>
       </div>
 
       <div class="friends-cal-panel">
         <div class="friends-cal-placeholder" id="fl-placeholder">
           <div class="empty-icon">👥</div>
-          <p>Select a friend to view their calendar</p>
+          <p>Accept a friend request, then select a friend to view their calendar</p>
         </div>
         <div id="fl-cal-view" style="display:none">
           <div class="friends-cal-header">
@@ -61,7 +66,7 @@ export function renderFriendsTab(container, uid) {
     </div>
   `;
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  // ── Calendar helpers ───────────────────────────────────────────────────────
 
   function showPlaceholder() {
     container.querySelector('#fl-placeholder').style.display = '';
@@ -76,58 +81,115 @@ export function renderFriendsTab(container, uid) {
   }
 
   async function loadCalendar(friend) {
-    _selected = friend;
+    // friend: { uid, displayName, email }
+    _selected        = friend;
     _lastSelectedUid = friend?.uid || null;
 
     if (!friend) { showPlaceholder(); return; }
 
     container.querySelector('#fl-placeholder').style.display = 'none';
     container.querySelector('#fl-cal-view').style.display    = '';
-    container.querySelector('#fl-cal-name').textContent      = friend.displayName || friend.email;
+    container.querySelector('#fl-cal-name').textContent      =
+      friend.displayName || friend.email || 'Friend';
 
     _friendTrips = await getFriendTrips(friend.uid);
     drawCal();
   }
 
-  // ── Friend list rendering ──────────────────────────────────────────────────
+  // ── Left panel rendering ───────────────────────────────────────────────────
 
-  function renderList() {
-    const listEl = container.querySelector('#fl-list');
-    if (!_friends.length) {
-      listEl.innerHTML = `<p class="fl-empty">No friends yet — add one above.</p>`;
-      return;
+  function renderPanel() {
+    const friends = _sent.filter(r => r.status === 'accepted');
+    const pending = _sent.filter(r => r.status === 'pending');
+    const panelEl = container.querySelector('#fl-panel-body');
+
+    let html = '';
+
+    // ── Incoming requests ──────────────────────────────────────────────────
+    if (_received.length) {
+      html += `<div class="fl-section-label">Requests (${_received.length})</div>`;
+      html += _received.map(r => `
+        <div class="fl-request-item" data-reqid="${r.id}">
+          <div class="fl-friend-info">
+            <div class="fl-friend-name">${esc(r.fromDisplayName || r.fromEmail)}</div>
+            <div class="fl-friend-email">${esc(r.fromEmail)}</div>
+          </div>
+          <button class="fl-accept-btn add-btn"   data-reqid="${r.id}" data-uid="${r.from}" data-name="${esc(r.fromDisplayName)}" data-email="${esc(r.fromEmail)}">✓</button>
+          <button class="fl-decline-btn ghost-btn" data-reqid="${r.id}">✕</button>
+        </div>
+      `).join('');
     }
 
-    listEl.innerHTML = _friends.map(f => `
-      <div class="fl-friend-item ${_selected?.uid === f.uid ? 'selected' : ''}"
-           data-fuid="${f.uid}">
-        <div class="fl-friend-info">
-          <div class="fl-friend-name">${esc(f.displayName || f.email)}</div>
-          <div class="fl-friend-email">${esc(f.email)}</div>
-        </div>
-        <button class="fl-remove-btn" data-fuid="${f.uid}" title="Remove friend">×</button>
-      </div>
-    `).join('');
+    // ── Accepted friends ───────────────────────────────────────────────────
+    html += `<div class="fl-section-label">${friends.length ? `Friends (${friends.length})` : 'Friends'}</div>`;
+    if (friends.length) {
+      html += friends.map(r => {
+        const isSelected = _selected?.uid === r.to;
+        return `
+          <div class="fl-friend-item ${isSelected ? 'selected' : ''}" data-uid="${r.to}" data-reqid="${r.id}">
+            <div class="fl-friend-info">
+              <div class="fl-friend-name">${esc(r.toDisplayName || r.toEmail)}</div>
+              <div class="fl-friend-email">${esc(r.toEmail)}</div>
+            </div>
+            <button class="fl-remove-btn" data-reqid="${r.id}" data-uid="${r.to}" title="Remove">×</button>
+          </div>`;
+      }).join('');
+    } else {
+      html += `<p class="fl-empty">No friends yet — send a request above.</p>`;
+    }
 
-    listEl.querySelectorAll('.fl-friend-item').forEach(el => {
-      el.addEventListener('click', e => {
-        if (e.target.closest('.fl-remove-btn')) return;
-        const friend = _friends.find(f => f.uid === el.dataset.fuid) || null;
-        renderList();   // redraw selection highlight first
-        loadCalendar(friend);
+    // ── Pending sent ───────────────────────────────────────────────────────
+    if (pending.length) {
+      html += `<div class="fl-section-label">Pending</div>`;
+      html += pending.map(r => `
+        <div class="fl-pending-item">
+          <div class="fl-friend-info">
+            <div class="fl-friend-name">${esc(r.toDisplayName || r.toEmail)}</div>
+            <div class="fl-friend-email">Awaiting response…</div>
+          </div>
+          <button class="fl-remove-btn" data-reqid="${r.id}" title="Cancel request">×</button>
+        </div>
+      `).join('');
+    }
+
+    panelEl.innerHTML = html;
+
+    // ── Events ────────────────────────────────────────────────────────────
+
+    panelEl.querySelectorAll('.fl-accept-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        await acceptFriendRequest(btn.dataset.reqid);
+        // subscription will re-render; auto-load their calendar
+        loadCalendar({ uid: btn.dataset.uid, displayName: btn.dataset.name, email: btn.dataset.email });
       });
     });
 
-    listEl.querySelectorAll('.fl-remove-btn').forEach(btn => {
+    panelEl.querySelectorAll('.fl-decline-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
-        const fuid = btn.dataset.fuid;
-        if (_selected?.uid === fuid) { _selected = null; _lastSelectedUid = null; showPlaceholder(); }
-        await removeFriend(uid, fuid);
+        btn.disabled = true;
+        await declineFriendRequest(btn.dataset.reqid);
+      });
+    });
+
+    panelEl.querySelectorAll('.fl-friend-item').forEach(el => {
+      el.addEventListener('click', e => {
+        if (e.target.closest('.fl-remove-btn')) return;
+        const req = _sent.find(r => r.id === el.dataset.reqid);
+        if (req) loadCalendar({ uid: req.to, displayName: req.toDisplayName, email: req.toEmail });
+      });
+    });
+
+    panelEl.querySelectorAll('.fl-remove-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        if (_selected?.uid === btn.dataset.uid) { _selected = null; _lastSelectedUid = null; showPlaceholder(); }
+        await removeFriendRequest(btn.dataset.reqid);
       });
     });
   }
 
-  // ── Add friend ─────────────────────────────────────────────────────────────
+  // ── Add friend (send request) ──────────────────────────────────────────────
 
   const emailInput = container.querySelector('#fl-email');
   const addBtn     = container.querySelector('#fl-add-btn');
@@ -145,16 +207,20 @@ export function renderFriendsTab(container, uid) {
     statusEl.textContent = '';
     try {
       const found = await searchUserByEmail(email);
-      if (!found)                                setStatus('No user found with that email.', true);
-      else if (found.uid === uid)                setStatus("You can't add yourself.", true);
-      else if (_friends.some(f => f.uid === found.uid)) setStatus('Already in your list.', true);
-      else {
-        await addFriend(uid, found);
+      if (!found) {
+        setStatus('No account found. Ask your friend to open Trippy Planner first.', true);
+      } else if (found.uid === uid) {
+        setStatus("You can't add yourself.", true);
+      } else if (_sent.some(r => r.to === found.uid)) {
+        setStatus('You already have a request with this person.', true);
+      } else {
+        const me = getCurrentUser();
+        await sendFriendRequest(uid, me?.displayName || '', me?.email || '', found);
         emailInput.value = '';
-        setStatus(`${found.displayName || found.email} added!`, false);
+        setStatus(`Request sent to ${found.displayName || found.email}!`, false);
       }
-    } catch { setStatus('Something went wrong.', true); }
-    finally   { addBtn.disabled = false; addBtn.textContent = 'Add'; }
+    } catch { setStatus('Something went wrong. Try again.', true); }
+    finally  { addBtn.disabled = false; addBtn.textContent = 'Add'; }
   }
 
   addBtn.addEventListener('click', doAdd);
@@ -171,25 +237,21 @@ export function renderFriendsTab(container, uid) {
     if (_selected) drawCal();
   });
 
-  // ── Profile subscription ───────────────────────────────────────────────────
+  // ── Subscribe ──────────────────────────────────────────────────────────────
 
-  const unsub = subscribeToMyProfile(uid, profile => {
-    const uids     = profile.friends        || [];
-    const profiles = profile.friendProfiles || {};
-    _friends = uids.map(fuid => ({
-      uid:         fuid,
-      displayName: profiles[fuid]?.displayName || '',
-      email:       profiles[fuid]?.email        || '',
-    }));
+  const unsub = subscribeToMyFriendRequests(uid, (sent, received) => {
+    _sent     = sent;
+    _received = received;
+    renderPanel();
 
-    // Restore last selected friend after a re-render
-    const restored = _lastSelectedUid ? _friends.find(f => f.uid === _lastSelectedUid) : null;
-    if (restored && !_selected) loadCalendar(restored);
-
-    renderList();
+    // Restore last selected friend after re-render
+    if (_lastSelectedUid && !_selected) {
+      const req = sent.find(r => r.status === 'accepted' && r.to === _lastSelectedUid);
+      if (req) loadCalendar({ uid: req.to, displayName: req.toDisplayName, email: req.toEmail });
+    }
   });
 
-  return unsub; // caller must invoke this when leaving the tab
+  return unsub;
 }
 
 function esc(s) {
