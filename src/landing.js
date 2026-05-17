@@ -21,7 +21,15 @@ export function renderLanding(root) {
 
   if (_listStore) { _listStore.destroy(); _listStore = null; }
 
-  _listStore = createTripListStore(uid, displayName, trips => _render(root, trips, uid));
+  _listStore = createTripListStore(uid, displayName, trips => {
+    const hash = window.location.hash;
+    if (hash !== '#/' && hash !== '#' && hash !== '') {
+      // Navigated away — stop listening so Firestore writes from other views
+      // don't clobber the current page.
+      _listStore?.destroy(); _listStore = null; return;
+    }
+    _render(root, trips, uid);
+  });
 }
 
 // ── Main render ───────────────────────────────────────────────────────────────

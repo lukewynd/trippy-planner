@@ -282,7 +282,7 @@ export function createApp(root, tripId) {
   function refresh() {
     updateRoleButtons();
     root.querySelector('#trip-name-label').textContent = _store.tripName();
-    const plannerOpts = (uid && userRole !== 'owner')
+const plannerOpts = (uid && userRole !== 'owner')
       ? { onAddDay: day => openAddDayModal(day, tripId, uid) }
       : {};
     renderPlanner(root, trips, _makeStoreProxy(), openId, id => {
