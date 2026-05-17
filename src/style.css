@@ -1609,4 +1609,36 @@ body {
   .friends-panel { width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
   .friends-cal-panel { padding: 16px; }
   .share-link-row { flex-direction: column; }
+
+  /* Calendar: equal-size cells, no horizontal scroll */
+  .cal-grid {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+  .cal-cell {
+    min-height: 0;
+    aspect-ratio: 1;
+    padding: 4px 3px;
+    overflow: hidden;
+  }
+  .cal-date-num {
+    font-size: 9px;
+    margin-bottom: 2px;
+  }
+  .cal-dest {
+    font-size: 9px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .cal-note {
+    font-size: 8px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .cal-header-cell {
+    font-size: 9px;
+    padding: 4px 0;
+  }
 }

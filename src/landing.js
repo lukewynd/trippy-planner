@@ -361,13 +361,18 @@ function _isPast(trip) {
   return dates[dates.length - 1] < today;
 }
 
+function _firstDate(trip) {
+  const dates = (trip.days || []).map(d => d.date).filter(Boolean).sort();
+  return dates[0] || '9999-99-99'; // undated trips sort to end
+}
+
 function _applyFilter(trips, uid) {
-  if (_filter === 'past') return trips.filter(t => _isPast(t));
-  // All other filters exclude past trips
+  const sort = arr => [...arr].sort((a, b) => _firstDate(a).localeCompare(_firstDate(b)));
+  if (_filter === 'past') return sort(trips.filter(t => _isPast(t)));
   const active = trips.filter(t => !_isPast(t));
-  if (_filter === 'mine')   return active.filter(t => !uid || !t.ownerId || t.ownerId === uid);
-  if (_filter === 'shared') return active.filter(t => uid && t.ownerId && t.ownerId !== uid);
-  return active; // 'all' = active trips only
+  if (_filter === 'mine')   return sort(active.filter(t => !uid || !t.ownerId || t.ownerId === uid));
+  if (_filter === 'shared') return sort(active.filter(t => uid && t.ownerId && t.ownerId !== uid));
+  return sort(active);
 }
 
 function _emptyMessage() {
