@@ -216,9 +216,12 @@ export function createTripStore(tripId, userId, onChange) {
     id: tripId, name: 'Trip', ownerId: null, ownerName: '',
     memberUids: [], members: {}, createdAt: Date.now(), updatedAt: Date.now(), days: [],
   };
-  let _days  = Array.isArray(_trip.days) ? _trip.days : [];
-  let _unsub = null;
-  let _timer = null;
+  let _days         = Array.isArray(_trip.days) ? _trip.days : [];
+  let _unsub        = null;
+  let _timer        = null;
+  // True while a local write is queued or in-flight. Suppresses the Firestore
+  // echo so an incoming snapshot doesn't clobber the user's in-progress edits.
+  let _pendingWrite = false;
 
   function saveLocal() {
     _trip.days      = _days;
@@ -228,21 +231,34 @@ export function createTripStore(tripId, userId, onChange) {
 
   function scheduleFirestore() {
     clearTimeout(_timer);
+    _pendingWrite = true;
     _timer = setTimeout(async () => {
       const db = getDb();
-      if (!db || !userId) return;
+      if (!db || !userId) { _pendingWrite = false; return; }
       try {
         await setDoc(doc(db, 'trips', tripId),
           { ..._trip, days: _days, updatedAt: serverTimestamp() },
           { merge: true });
       } catch (e) { console.warn('Firestore write:', e); }
+      // Keep suppressing for a moment so the echo snapshot is ignored.
+      setTimeout(() => { _pendingWrite = false; }, 3000);
     }, 1500);
   }
 
-  function notify() {
+  // notifyStructural: called when the list of days changes (add / remove / CSV
+  // load). Rebuilds the planner UI so new/removed rows appear immediately.
+  function notifyStructural() {
     saveLocal();
     if (userId) scheduleFirestore();
     onChange([..._days]);
+  }
+
+  // notifySilent: called when only a field value changes (user is typing).
+  // Persists locally and queues a cloud write but does NOT rebuild the DOM,
+  // so the user keeps focus and can keep typing without interruption.
+  function notifySilent() {
+    saveLocal();
+    if (userId) scheduleFirestore();
   }
 
   if (userId) {
@@ -250,6 +266,9 @@ export function createTripStore(tripId, userId, onChange) {
     if (db) {
       _unsub = onSnapshot(doc(db, 'trips', tripId), snap => {
         if (!snap.exists()) return;
+        // Suppress echoes of our own writes — the local state is already correct
+        // and re-rendering would interrupt any in-progress editing.
+        if (_pendingWrite) return;
         const data = snap.data();
         _trip = normTrip({ id: tripId, ...data });
         _days = Array.isArray(_trip.days) ? _trip.days : [];
@@ -269,22 +288,22 @@ export function createTripStore(tripId, userId, onChange) {
       const day = { ...defaultDay(), date, destination };
       _days.push(day);
       _days.sort((a, b) => a.date.localeCompare(b.date));
-      notify();
+      notifyStructural();
     },
 
     update(id, field, value) {
       const d = _days.find(d => d.id === id);
-      if (d) { d[field] = value; notify(); }
+      if (d) { d[field] = value; notifySilent(); }
     },
 
     remove(id) {
       _days = _days.filter(d => d.id !== id);
-      notify();
+      notifyStructural();
     },
 
     loadFromCSV(rows) {
       _days = rows;
-      notify();
+      notifyStructural();
     },
 
     toCSV() {
