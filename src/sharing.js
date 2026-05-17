@@ -134,6 +134,77 @@ export function openShareModal(tripId, tripData, uid) {
   });
 }
 
+// ── Single-day "Add to my trip" modal ────────────────────────────────────────
+// Shown when a viewer clicks the ＋ Add button on an individual day card.
+
+export function openAddDayModal(day, sharedTripId, uid) {
+  document.getElementById('add-day-overlay')?.remove();
+
+  const ownTrips = rdIndex()
+    .map(m => rdTrip(m.id))
+    .filter(Boolean)
+    .filter(t => t.id !== sharedTripId && (!t.ownerId || t.ownerId === uid));
+
+  const options = ownTrips.length
+    ? ownTrips.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')
+    : '<option disabled>No own trips — create one first</option>';
+
+  const overlay = document.createElement('div');
+  overlay.className    = 'modal-overlay';
+  overlay.id           = 'add-day-overlay';
+  overlay.style.display = 'flex';
+  overlay.innerHTML = `
+    <div class="modal-box add-day-box">
+      <div class="modal-title">Add Day to My Trip</div>
+      <div class="add-day-preview">
+        <div class="add-day-date">${_fmtShort(day.date)}</div>
+        <div class="add-day-dest">${esc(day.destination || 'Unknown')}</div>
+        ${day.event        ? `<div class="add-day-field">${esc(day.event)}</div>`        : ''}
+        ${day.travelDetails? `<div class="add-day-field muted">${esc(day.travelDetails)}</div>` : ''}
+      </div>
+      <div class="add-day-target-row">
+        <label class="add-day-label">Add to:</label>
+        <select id="add-day-target" class="dark-input">${options}</select>
+      </div>
+      <div class="modal-actions">
+        <button class="add-btn"   id="add-day-confirm" ${!ownTrips.length ? 'disabled' : ''}>Add Day</button>
+        <button class="ghost-btn" id="add-day-cancel">Cancel</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  document.getElementById('add-day-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+  document.getElementById('add-day-confirm').addEventListener('click', async () => {
+    const targetId = document.getElementById('add-day-target').value;
+    const targetName = ownTrips.find(t => t.id === targetId)?.name || 'trip';
+    const btn = document.getElementById('add-day-confirm');
+    btn.textContent = 'Adding…';
+    btn.disabled = true;
+    try {
+      await copyDaysToTrip([day], targetId, uid);
+      close();
+      _showToast(`Day added to "${targetName}"`);
+    } catch (e) {
+      alert('Could not add day: ' + e.message);
+      btn.textContent = 'Add Day';
+      btn.disabled = false;
+    }
+  });
+}
+
+function _showToast(msg) {
+  const el = document.createElement('div');
+  el.className   = 'toast-success';
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 2800);
+}
+
 // ── Copy-days-to-my-trip modal ────────────────────────────────────────────────
 // Shows when a viewer clicks "Copy Days to My Trip" in the planner.
 

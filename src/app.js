@@ -9,7 +9,7 @@ import { renderPlanner }    from './planner.js';
 import { renderCalendar }   from './calendar.js';
 import { getCurrentUser, renderAuthHeader } from './auth.js';
 import { navigate }         from './router.js';
-import { openShareModal, openCopyDaysModal } from './sharing.js';
+import { openShareModal, openCopyDaysModal, openAddDayModal } from './sharing.js';
 
 let _store = null;
 
@@ -282,10 +282,13 @@ export function createApp(root, tripId) {
   function refresh() {
     updateRoleButtons();
     root.querySelector('#trip-name-label').textContent = _store.tripName();
+    const plannerOpts = (uid && userRole !== 'owner' && userRole !== 'editor')
+      ? { onAddDay: day => openAddDayModal(day, tripId, uid) }
+      : {};
     renderPlanner(root, trips, _makeStoreProxy(), openId, id => {
       openId = id;
       refresh();
-    });
+    }, plannerOpts);
     if (activeTab === 'calendar') renderCalendar(root, trips, calYear, calMonth);
   }
 

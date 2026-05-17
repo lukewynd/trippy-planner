@@ -1357,6 +1357,82 @@ body {
 .join-prompt p  { color: var(--text-muted); font-size: 14px; max-width: 360px; }
 .join-hint      { color: var(--text-faint) !important; font-style: italic; }
 
+/* ── Add-to-my-trip button ────────────────────────────────── */
+.add-to-my-trip-btn {
+  margin-left: auto;
+  padding: 3px 10px;
+  font-size: 12px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.add-to-my-trip-btn:hover { background: var(--accent-hover, #7c3aed); }
+
+/* ── Add-day modal ────────────────────────────────────────── */
+.add-day-box { max-width: 420px; }
+
+.add-day-preview {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+.add-day-date {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.add-day-dest {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.add-day-field {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.add-day-field.muted { font-style: italic; }
+
+.add-day-target-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.add-day-label {
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ── Toast ────────────────────────────────────────────────── */
+.toast-success {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #16a34a;
+  color: #fff;
+  padding: 10px 22px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 4px 16px rgba(0,0,0,.4);
+  z-index: 9999;
+  animation: toastIn .2s ease;
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
 /* ── Responsive additions ─────────────────────────────────── */
 @media (max-width: 640px) {
   .landing-grid { grid-template-columns: 1fr; }

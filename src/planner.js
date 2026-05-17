@@ -15,7 +15,7 @@ function esc(s) {
   return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
 }
 
-export function renderPlanner(container, trips, store, openId, setOpen) {
+export function renderPlanner(container, trips, store, openId, setOpen, opts = {}) {
   const metrics = store.metrics();
 
   // ── Metrics ────────────────────────────────────────────────────────────────
@@ -115,6 +115,7 @@ export function renderPlanner(container, trips, store, openId, setOpen) {
           <div class="day-dest">${esc(t.destination)}</div>
           ${badge}
           <span class="chevron${isOpen ? ' open' : ''}">&#9654;</span>
+          ${opts.onAddDay ? `<button class="add-to-my-trip-btn" data-addday="${t.id}" title="Add this day to one of your trips">＋ Add</button>` : ''}
         </div>
         ${detail}
       </div>`;
@@ -127,6 +128,16 @@ export function renderPlanner(container, trips, store, openId, setOpen) {
       setOpen(openId === id ? null : id);
     });
   });
+
+  if (opts.onAddDay) {
+    list.querySelectorAll('[data-addday]').forEach(el => {
+      el.addEventListener('click', e => {
+        e.stopPropagation(); // don't open/close the accordion
+        const day = trips.find(t => t.id === el.dataset.addday);
+        if (day) opts.onAddDay(day);
+      });
+    });
+  }
 
   list.querySelectorAll('[data-field]').forEach(el => {
     const handler = () => {
