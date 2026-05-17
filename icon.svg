@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- App purple gradient: lighter top-left → richer bottom-right -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#b0a4fd"/>
+      <stop offset="50%"  stop-color="#7c6af7"/>
+      <stop offset="100%" stop-color="#5038d0"/>
+    </linearGradient>
+
+    <!-- Soft inner highlight (glass effect) -->
+    <radialGradient id="shine" cx="35%" cy="25%" r="60%">
+      <stop offset="0%"   stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Clip to the rounded square -->
+    <clipPath id="squircle">
+      <rect width="1024" height="1024" rx="220"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="220" fill="url(#bg)"/>
+
+  <!-- Glass highlight -->
+  <rect width="1024" height="1024" rx="220" fill="url(#shine)" clip-path="url(#squircle)"/>
+
+  <!-- ── 't' ─────────────────────────────────────────────────────────── -->
+  <!--
+    Stem:      x 328–400  y 218–694    (vertical bar, fully rounded caps)
+    Crossbar:  x 213–481  y 438–494    (horizontal bar, fully rounded ends)
+    The stem is centred at x 364; crossbar centred at x 347.
+  -->
+  <rect x="328" y="218" width="72" height="476" rx="36" ry="36" fill="white"/>
+  <rect x="213" y="438" width="268" height="56" rx="28" ry="28" fill="white"/>
+
+  <!-- ── 'p' ─────────────────────────────────────────────────────────── -->
+  <!--
+    Stem:      x 500–572  y 446–826    (includes descender below baseline)
+    Bowl:      circle cx 688 cy 572 r 124
+               → top y 448, bottom y 696 (baseline)
+               → left x 564 (8 px behind stem-right of 572 = nice overlap)
+               → right x 812
+    Horizontal centre of whole 'tp':
+               left-of-crossbar 213, right-of-bowl 812 → mid 512.5 ✓
+  -->
+  <rect x="500" y="446" width="72" height="380" rx="36" ry="36" fill="white"/>
+  <circle cx="688" cy="572" r="124" fill="white"/>
+</svg>
