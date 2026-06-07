@@ -1642,3 +1642,102 @@ body {
     padding: 4px 0;
   }
 }
+
+/* ── Calendar day detail modal ────────────────────────────────── */
+.cal-day-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.cal-day-modal {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+  width: 100%;
+  max-width: 420px;
+  position: relative;
+}
+
+.cdm-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+}
+.cdm-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+.cdm-date {
+  font-size: 13px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.cdm-dest {
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.cdm-trip-name {
+  font-size: 12px;
+  color: var(--accent);
+  margin-bottom: 16px;
+}
+
+.cdm-body {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cdm-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cdm-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.cdm-val {
+  font-size: 14px;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.cdm-badges {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.cal-clickable { cursor: pointer; }
+.cal-clickable:hover { border-color: var(--accent) !important; }
+
+/* ── Add-bar label optional hint ─────────────────────────────── */
+.label-optional {
+  font-size: 10px;
+  color: var(--text-faint);
+  font-weight: 400;
+}

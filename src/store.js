@@ -322,6 +322,12 @@ export function createTripStore(tripId, userId, onChange) {
       notifyStructural();
     },
 
+    addBatch(dates, destination) {
+      dates.forEach(date => _days.push({ ...defaultDay(), date, destination }));
+      _days.sort((a, b) => a.date.localeCompare(b.date));
+      notifyStructural();
+    },
+
     update(id, field, value) {
       const d = _days.find(d => d.id === id);
       if (d) { d[field] = value; notifySilent(); }
@@ -581,9 +587,7 @@ export function subscribeToMyFriendRequests(uid, onChange) {
   const unsubRecv = onSnapshot(
     query(collection(db, 'friendRequests'), where('to', '==', uid)),
     snap => {
-      _recv = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter(r => r.status === 'pending');
+      _recv = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       notify();
     },
     err => console.warn('friendRequests (recv):', err)

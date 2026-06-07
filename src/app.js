@@ -13,6 +13,14 @@ import { openShareModal, openCopyDaysModal, openAddDayModal } from './sharing.js
 
 let _store = null;
 
+function _datesInRange(start, end) {
+  const dates = [];
+  const d = new Date(start + 'T00:00:00');
+  const e = new Date(end   + 'T00:00:00');
+  while (d <= e) { dates.push(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); }
+  return dates;
+}
+
 export function createApp(root, tripId) {
   if (_store) { _store.destroy(); _store = null; }
 
@@ -61,9 +69,14 @@ export function createApp(root, tripId) {
         <div class="section-label">Add a new day</div>
         <div class="add-bar">
           <div class="field-group date-picker-wrap" id="dp-wrap">
-            <label>Date</label>
+            <label>Start Date</label>
             <input class="dark-input" id="new-date-display"
               placeholder="Pick a date" readonly>
+          </div>
+          <div class="field-group date-picker-wrap" id="dp-end-wrap">
+            <label>End Date <span class="label-optional">(optional)</span></label>
+            <input class="dark-input" id="new-end-date-display"
+              placeholder="Same day" readonly>
           </div>
           <div class="field-group">
             <label>Destination</label>
@@ -173,14 +186,31 @@ export function createApp(root, tripId) {
   });
 
   // ── Date Picker (edit mode only) ───────────────────────────────────────────
-  let selectedDate = null;
-  let dp           = null;
+  let selectedDate    = null;
+  let selectedEndDate = null;
+  let dp              = null;
+  let dpEnd           = null;
 
   if (!isReadOnly) {
-    const dpWrap  = root.querySelector('#dp-wrap');
-    const dpInput = root.querySelector('#new-date-display');
-    dp = new DatePicker(dpWrap, dpInput, ds => { selectedDate = ds; });
+    const dpWrap    = root.querySelector('#dp-wrap');
+    const dpInput   = root.querySelector('#new-date-display');
+    const dpEndWrap = root.querySelector('#dp-end-wrap');
+    const dpEndInput = root.querySelector('#new-end-date-display');
+    const addBtn    = root.querySelector('#add-btn');
+
+    function updateAddBtn() {
+      if (selectedDate && selectedEndDate && selectedEndDate > selectedDate) {
+        const count = _datesInRange(selectedDate, selectedEndDate).length;
+        addBtn.textContent = `+ Add ${count} Days`;
+      } else {
+        addBtn.textContent = '+ Add Day';
+      }
+    }
+
+    dp = new DatePicker(dpWrap, dpInput, ds => { selectedDate = ds; updateAddBtn(); });
     dp.init();
+    dpEnd = new DatePicker(dpEndWrap, dpEndInput, ds => { selectedEndDate = ds; updateAddBtn(); });
+    dpEnd.init();
 
     const destInput = root.querySelector('#new-dest');
 
@@ -193,9 +223,18 @@ export function createApp(root, tripId) {
       }
       dpInput.style.borderColor   = '';
       destInput.style.borderColor = '';
-      _store.add(selectedDate, dest);
+
+      if (selectedEndDate && selectedEndDate >= selectedDate) {
+        _store.addBatch(_datesInRange(selectedDate, selectedEndDate), dest);
+      } else {
+        _store.add(selectedDate, dest);
+      }
+
       selectedDate = null;
+      selectedEndDate = null;
       dp.reset();
+      dpEnd.reset();
+      updateAddBtn();
       destInput.value = '';
       destInput.focus();
     }

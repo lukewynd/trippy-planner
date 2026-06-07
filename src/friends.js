@@ -99,16 +99,25 @@ export function renderFriendsTab(container, uid) {
   // ── Left panel rendering ───────────────────────────────────────────────────
 
   function renderPanel() {
-    const friends = _sent.filter(r => r.status === 'accepted');
-    const pending = _sent.filter(r => r.status === 'pending');
+    // Normalise both directions into one friends array
+    const seenUids = new Set();
+    const friends = [
+      ..._sent.filter(r => r.status === 'accepted')
+        .map(r => ({ uid: r.to,   displayName: r.toDisplayName,   email: r.toEmail,   reqId: r.id })),
+      ..._received.filter(r => r.status === 'accepted')
+        .map(r => ({ uid: r.from, displayName: r.fromDisplayName, email: r.fromEmail, reqId: r.id })),
+    ].filter(f => { if (seenUids.has(f.uid)) return false; seenUids.add(f.uid); return true; });
+
+    const pendingReceived = _received.filter(r => r.status === 'pending');
+    const pendingSent     = _sent.filter(r => r.status === 'pending');
     const panelEl = container.querySelector('#fl-panel-body');
 
     let html = '';
 
     // ── Incoming requests ──────────────────────────────────────────────────
-    if (_received.length) {
-      html += `<div class="fl-section-label">Requests (${_received.length})</div>`;
-      html += _received.map(r => `
+    if (pendingReceived.length) {
+      html += `<div class="fl-section-label">Requests (${pendingReceived.length})</div>`;
+      html += pendingReceived.map(r => `
         <div class="fl-request-item" data-reqid="${r.id}">
           <div class="fl-friend-info">
             <div class="fl-friend-name">${esc(r.fromDisplayName || r.fromEmail)}</div>
@@ -120,18 +129,20 @@ export function renderFriendsTab(container, uid) {
       `).join('');
     }
 
-    // ── Accepted friends ───────────────────────────────────────────────────
+    // ── Accepted friends (both directions) ─────────────────────────────────
     html += `<div class="fl-section-label">${friends.length ? `Friends (${friends.length})` : 'Friends'}</div>`;
     if (friends.length) {
-      html += friends.map(r => {
-        const isSelected = _selected?.uid === r.to;
+      html += friends.map(f => {
+        const isSelected = _selected?.uid === f.uid;
         return `
-          <div class="fl-friend-item ${isSelected ? 'selected' : ''}" data-uid="${r.to}" data-reqid="${r.id}">
+          <div class="fl-friend-item ${isSelected ? 'selected' : ''}"
+            data-uid="${f.uid}" data-reqid="${f.reqId}"
+            data-name="${esc(f.displayName)}" data-email="${esc(f.email)}">
             <div class="fl-friend-info">
-              <div class="fl-friend-name">${esc(r.toDisplayName || r.toEmail)}</div>
-              <div class="fl-friend-email">${esc(r.toEmail)}</div>
+              <div class="fl-friend-name">${esc(f.displayName || f.email)}</div>
+              <div class="fl-friend-email">${esc(f.email)}</div>
             </div>
-            <button class="fl-remove-btn" data-reqid="${r.id}" data-uid="${r.to}" title="Remove">×</button>
+            <button class="fl-remove-btn" data-reqid="${f.reqId}" data-uid="${f.uid}" title="Remove">×</button>
           </div>`;
       }).join('');
     } else {
@@ -139,9 +150,9 @@ export function renderFriendsTab(container, uid) {
     }
 
     // ── Pending sent ───────────────────────────────────────────────────────
-    if (pending.length) {
+    if (pendingSent.length) {
       html += `<div class="fl-section-label">Pending</div>`;
-      html += pending.map(r => `
+      html += pendingSent.map(r => `
         <div class="fl-pending-item">
           <div class="fl-friend-info">
             <div class="fl-friend-name">${esc(r.toDisplayName || r.toEmail)}</div>
@@ -160,7 +171,6 @@ export function renderFriendsTab(container, uid) {
       btn.addEventListener('click', async () => {
         btn.disabled = true;
         await acceptFriendRequest(btn.dataset.reqid);
-        // subscription will re-render; auto-load their calendar
         loadCalendar({ uid: btn.dataset.uid, displayName: btn.dataset.name, email: btn.dataset.email });
       });
     });
@@ -175,8 +185,7 @@ export function renderFriendsTab(container, uid) {
     panelEl.querySelectorAll('.fl-friend-item').forEach(el => {
       el.addEventListener('click', e => {
         if (e.target.closest('.fl-remove-btn')) return;
-        const req = _sent.find(r => r.id === el.dataset.reqid);
-        if (req) loadCalendar({ uid: req.to, displayName: req.toDisplayName, email: req.toEmail });
+        loadCalendar({ uid: el.dataset.uid, displayName: el.dataset.name, email: el.dataset.email });
       });
     });
 
@@ -244,10 +253,15 @@ export function renderFriendsTab(container, uid) {
     _received = received;
     renderPanel();
 
-    // Restore last selected friend after re-render
+    // Restore last selected friend after re-render (check both directions)
     if (_lastSelectedUid && !_selected) {
-      const req = sent.find(r => r.status === 'accepted' && r.to === _lastSelectedUid);
-      if (req) loadCalendar({ uid: req.to, displayName: req.toDisplayName, email: req.toEmail });
+      const fromSent = sent.find(r => r.status === 'accepted' && r.to === _lastSelectedUid);
+      if (fromSent) {
+        loadCalendar({ uid: fromSent.to, displayName: fromSent.toDisplayName, email: fromSent.toEmail });
+      } else {
+        const fromRecv = received.find(r => r.status === 'accepted' && r.from === _lastSelectedUid);
+        if (fromRecv) loadCalendar({ uid: fromRecv.from, displayName: fromRecv.fromDisplayName, email: fromRecv.fromEmail });
+      }
     }
   });
 
